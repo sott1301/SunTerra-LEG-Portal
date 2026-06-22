@@ -71,23 +71,44 @@ type ConsentEvidence = {
   accepted_at: string;
 };
 
+type AuditEvent = {
+  id: string;
+  action: string;
+  actor_role: Role;
+  created_at: string;
+  from_status: string | null;
+  to_status: string | null;
+  reason: string | null;
+};
+
 type MutationRequest = {
   id: string;
   participant_id: string;
   leg_id: "basadingen";
   mutation_type: "address";
   mode: "regular";
-  status: "submitted";
+  status: "submitted" | "approved" | "rejected";
   quarter: string;
   quarter_end: string;
   participant_deadline: string;
   effective_date: string;
   submitted_at: string;
+  reviewed_at: string | null;
+  review_reason: string | null;
   new_address: {
     street: string;
     postal_code: string;
     city: string;
     country: string;
+  };
+  audit_events: AuditEvent[];
+};
+
+type AdminMutationRequest = MutationRequest & {
+  participant: {
+    participant_id: string;
+    display_name: string;
+    email: string;
   };
 };
 
@@ -157,6 +178,13 @@ export function App() {
     [],
   );
   const [mutationError, setMutationError] = useState("");
+  const [adminMutationRequests, setAdminMutationRequests] = useState<
+    AdminMutationRequest[]
+  >([]);
+  const [reviewReasons, setReviewReasons] = useState<Record<string, string>>(
+    {},
+  );
+  const [adminMutationError, setAdminMutationError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -198,6 +226,11 @@ export function App() {
     setSession({ kind: "authenticated", token, user });
     if (user.role === "participant") {
       void loadCurrentDocument(token);
+    }
+    if (user.role === "leg_admin") {
+      void loadAdminMutationRequests(token);
+    } else {
+      setAdminMutationRequests([]);
     }
   }
 
@@ -290,6 +323,66 @@ export function App() {
       const history = (await response.json()) as ConsentEvidence[];
       setConsentHistory(history);
     }
+  }
+
+  async function loadAdminMutationRequests(token: string) {
+    const response = await fetch(
+      `${apiBaseUrl}/api/admin/mutation-requests?status=submitted`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+
+    if (response.ok) {
+      const records = (await response.json()) as AdminMutationRequest[];
+      setAdminMutationRequests(records);
+    }
+  }
+
+  async function reviewAdminMutationRequest(
+    mutationRequestId: string,
+    decision: "approved" | "rejected",
+  ) {
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setAdminMutationError("");
+    const response = await fetch(
+      `${apiBaseUrl}/api/admin/mutation-requests/${mutationRequestId}/review-decision`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          decision === "rejected"
+            ? {
+                decision,
+                reason: reviewReasons[mutationRequestId] ?? "",
+              }
+            : { decision },
+        ),
+      },
+    );
+
+    if (response.ok) {
+      const updated = (await response.json()) as AdminMutationRequest;
+      setAdminMutationRequests((current) =>
+        current.map((mutationRequest) =>
+          mutationRequest.id === updated.id ? updated : mutationRequest,
+        ),
+      );
+      return;
+    }
+
+    const error = (await response.json()) as { detail?: string };
+    setAdminMutationError(
+      error.detail ?? "Mutation konnte nicht entschieden werden",
+    );
   }
 
   async function submitConsentEvidence(event: FormEvent<HTMLFormElement>) {
@@ -534,6 +627,79 @@ export function App() {
     </section>
   );
 
+  const adminMutationInbox = (
+    <section className="admin-mutation-inbox" aria-label="Offene Mutationen">
+      <h3>Offene Mutationen</h3>
+      {adminMutationRequests.length > 0 ? (
+        <div className="admin-mutation-list">
+          {adminMutationRequests.map((mutationRequest) => (
+            <div className="admin-mutation-item" key={mutationRequest.id}>
+              <p>{mutationRequest.participant.display_name}</p>
+              <p>{mutationRequest.participant.email}</p>
+              <p>{mutationRequest.quarter}</p>
+              <p>
+                {mutationRequest.new_address.street},{" "}
+                {mutationRequest.new_address.postal_code}{" "}
+                {mutationRequest.new_address.city}
+              </p>
+              <p>Status: {mutationRequest.status}</p>
+              {mutationRequest.review_reason ? (
+                <p>{mutationRequest.review_reason}</p>
+              ) : null}
+              <div className="review-actions">
+                <button
+                  type="button"
+                  disabled={mutationRequest.status !== "submitted"}
+                  onClick={() =>
+                    void reviewAdminMutationRequest(
+                      mutationRequest.id,
+                      "approved",
+                    )
+                  }
+                >
+                  Genehmigen
+                </button>
+                <label>
+                  Ablehnungsgrund
+                  <input
+                    type="text"
+                    value={reviewReasons[mutationRequest.id] ?? ""}
+                    disabled={mutationRequest.status !== "submitted"}
+                    onChange={(event) =>
+                      setReviewReasons((current) => ({
+                        ...current,
+                        [mutationRequest.id]: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={mutationRequest.status !== "submitted"}
+                  onClick={() =>
+                    void reviewAdminMutationRequest(
+                      mutationRequest.id,
+                      "rejected",
+                    )
+                  }
+                >
+                  Ablehnen
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p>Keine offenen Mutationen</p>
+      )}
+      {adminMutationError ? (
+        <div className="mutation-error" role="alert">
+          <p>{adminMutationError}</p>
+        </div>
+      ) : null}
+    </section>
+  );
+
   return (
     <main className="portal-shell">
       <section className="hero-band" aria-labelledby="portal-title">
@@ -601,39 +767,42 @@ export function App() {
             <h2>{activeWorkspace.workspaceTitle}</h2>
             <p>{session.user.display_name}</p>
             {session.user.role === "leg_admin" ? (
-              <form
-                className="invitation-form"
-                onSubmit={createParticipantInvitation}
-              >
-                <label>
-                  E-Mail
-                  <input
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(event) => setInviteEmail(event.target.value)}
-                    required
-                  />
-                </label>
-                <label>
-                  Anzeigename
-                  <input
-                    type="text"
-                    value={inviteDisplayName}
-                    onChange={(event) =>
-                      setInviteDisplayName(event.target.value)
-                    }
-                    required
-                  />
-                </label>
-                <button type="submit">Einladung erstellen</button>
-                {participantInvitation ? (
-                  <div className="invitation-result" role="status">
-                    <p>Einladung erstellt</p>
-                    <p>{participantInvitation.display_name}</p>
-                    <p>{participantInvitation.token}</p>
-                  </div>
-                ) : null}
-              </form>
+              <>
+                <form
+                  className="invitation-form"
+                  onSubmit={createParticipantInvitation}
+                >
+                  <label>
+                    E-Mail
+                    <input
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(event) => setInviteEmail(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Anzeigename
+                    <input
+                      type="text"
+                      value={inviteDisplayName}
+                      onChange={(event) =>
+                        setInviteDisplayName(event.target.value)
+                      }
+                      required
+                    />
+                  </label>
+                  <button type="submit">Einladung erstellen</button>
+                  {participantInvitation ? (
+                    <div className="invitation-result" role="status">
+                      <p>Einladung erstellt</p>
+                      <p>{participantInvitation.display_name}</p>
+                      <p>{participantInvitation.token}</p>
+                    </div>
+                  ) : null}
+                </form>
+                {adminMutationInbox}
+              </>
             ) : null}
             {session.user.role === "platform_admin" ? (
               <form
