@@ -375,6 +375,27 @@ class PartnerMutationPackageDetail(PartnerMutationPackageSummary):
     status_history: list[PartnerMutationPackageStatusEvent]
 
 
+class PartnerMemberLatestPackageStatus(BaseModel):
+    package_id: str
+    quarter: str
+    effective_date: str
+    status: str
+
+
+class PartnerMemberRead(BaseModel):
+    participant_id: str
+    display_name: str
+    membership_status: str
+    reporting_address: AddressRead
+    latest_package_status: PartnerMemberLatestPackageStatus
+
+
+class PartnerMemberRegisterRead(BaseModel):
+    leg_id: str
+    leg_name: str
+    members: list[PartnerMemberRead]
+
+
 INVITATIONS: dict[str, ParticipantInvitationRecord] = {}
 COMMUNICATION_EVENTS: list[CommunicationEventRead] = []
 PARTICIPANTS: dict[str, ParticipantRecord] = {}
@@ -674,6 +695,28 @@ def _partner_mutation_package_detail(
         **_partner_mutation_package_summary(package).model_dump(),
         records=package.records,
         status_history=_partner_status_read(metadata).status_history,
+    )
+
+
+def _partner_member_read(
+    package: MutationPackageRead,
+    record: MutationPackageRecord,
+) -> PartnerMemberRead:
+    participant = PARTICIPANTS[record.participant_id]
+    membership_status = (
+        "active" if participant.email_verified else "pending_email_verification"
+    )
+    return PartnerMemberRead(
+        participant_id=participant.id,
+        display_name=participant.display_name,
+        membership_status=membership_status,
+        reporting_address=record.new_address,
+        latest_package_status=PartnerMemberLatestPackageStatus(
+            package_id=package.package_id,
+            quarter=package.quarter,
+            effective_date=record.effective_date,
+            status=_mutation_package_metadata(package).current_status,
+        ),
     )
 
 
@@ -1240,6 +1283,37 @@ def partner_mutation_package_detail(
     package = _find_mutation_package(package_id)
 
     return _partner_mutation_package_detail(package)
+
+
+@app.get(
+    "/api/partner/member-register",
+    response_model=PartnerMemberRegisterRead,
+)
+def partner_member_register(
+    _user: CurrentUser = Depends(require_roles(Role.PARTNER_ADMIN)),
+) -> PartnerMemberRegisterRead:
+    latest_member_records: dict[str, tuple[MutationPackageRead, MutationPackageRecord]] = {}
+    for package in sorted(
+        MUTATION_PACKAGES.values(),
+        key=lambda item: (item.effective_date, item.generated_at, item.package_id),
+    ):
+        if package.leg_id != BASADINGEN_LEG_ID:
+            continue
+
+        for record in package.records:
+            latest_member_records[record.participant_id] = (package, record)
+
+    return PartnerMemberRegisterRead(
+        leg_id=BASADINGEN_LEG_ID,
+        leg_name=BASADINGEN_LEG_NAME,
+        members=[
+            _partner_member_read(package, record)
+            for package, record in sorted(
+                latest_member_records.values(),
+                key=lambda item: PARTICIPANTS[item[1].participant_id].display_name,
+            )
+        ],
+    )
 
 
 @app.post(
