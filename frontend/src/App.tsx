@@ -106,13 +106,24 @@ type ParticipantContactChannels = {
   audit_events: AuditEvent[];
 };
 
-type MutationType =
+type MutationMode = "regular" | "special";
+
+type RegularMutationType =
   | "address"
   | "meter_point"
   | "role"
   | "generation_asset"
   | "entry"
   | "exit";
+
+type SpecialMutationType =
+  | "move_out"
+  | "death"
+  | "owner_tenant_change"
+  | "meter_point_error"
+  | "municipality_utility_correction";
+
+type MutationType = RegularMutationType | SpecialMutationType;
 
 type MutationDetails = Record<string, string | number>;
 
@@ -121,11 +132,11 @@ type MutationRequest = {
   participant_id: string;
   leg_id: "basadingen";
   mutation_type: MutationType;
-  mode: "regular";
+  mode: MutationMode;
   status: "submitted" | "approved" | "rejected";
-  quarter: string;
-  quarter_end: string;
-  participant_deadline: string;
+  quarter: string | null;
+  quarter_end: string | null;
+  participant_deadline: string | null;
   effective_date: string;
   submitted_at: string;
   reviewed_at: string | null;
@@ -307,13 +318,29 @@ const emptyFileEvidenceDraft: FileEvidenceDraft = {
   contentType: "text/plain",
   content: "",
 };
-const mutationTypeOptions: Array<{ value: MutationType; label: string }> = [
+const regularMutationTypeOptions: Array<{
+  value: RegularMutationType;
+  label: string;
+}> = [
   { value: "address", label: "Adressmutation" },
   { value: "meter_point", label: "Messpunktmutation" },
   { value: "role", label: "Rollenmutation" },
   { value: "generation_asset", label: "Erzeugungsanlage" },
   { value: "entry", label: "Eintritt" },
   { value: "exit", label: "Austritt" },
+];
+const specialMutationTypeOptions: Array<{
+  value: SpecialMutationType;
+  label: string;
+}> = [
+  { value: "move_out", label: "Auszug" },
+  { value: "death", label: "Todesfall" },
+  { value: "owner_tenant_change", label: "Eigentuemer-/Mieterwechsel" },
+  { value: "meter_point_error", label: "Messpunktfehler" },
+  {
+    value: "municipality_utility_correction",
+    label: "Gemeinde-/EW-Korrektur",
+  },
 ];
 const roleOptions = [
   { value: "owner", label: "Eigentuemer" },
@@ -331,9 +358,18 @@ function textToBase64(value: string) {
 
 function mutationTypeLabel(mutationType: MutationType) {
   return (
-    mutationTypeOptions.find((option) => option.value === mutationType)?.label ??
+    regularMutationTypeOptions.find((option) => option.value === mutationType)
+      ?.label ??
+    specialMutationTypeOptions.find((option) => option.value === mutationType)
+      ?.label ??
     mutationType
   );
+}
+
+function isSpecialMutationType(
+  mutationType: MutationType,
+): mutationType is SpecialMutationType {
+  return specialMutationTypeOptions.some((option) => option.value === mutationType);
 }
 
 function requestedRoleLabel(value: string | number | undefined) {
@@ -354,6 +390,12 @@ function mutationDetailLines(
   details: MutationDetails,
   newAddress: MutationRequest["new_address"],
 ) {
+  if (isSpecialMutationType(mutationType)) {
+    return [
+      `Grund: ${details.reason ?? ""}`,
+      `Ereignisdatum: ${details.event_date ?? ""}`,
+    ];
+  }
   if (mutationType === "address") {
     return [`Adresse: ${addressLine(newAddress)}`];
   }
@@ -410,6 +452,7 @@ export function App() {
     useState<PreferredContactChannel>("email");
   const [contactChannelSaved, setContactChannelSaved] = useState(false);
   const [contactChannelError, setContactChannelError] = useState("");
+  const [mutationMode, setMutationMode] = useState<MutationMode>("regular");
   const [mutationType, setMutationType] = useState<MutationType>("address");
   const [mutationQuarter, setMutationQuarter] = useState("2026-Q3");
   const [addressStreet, setAddressStreet] = useState("");
@@ -422,6 +465,7 @@ export function App() {
   const [installedCapacityKw, setInstalledCapacityKw] = useState("");
   const [commissionedOn, setCommissionedOn] = useState("");
   const [mutationReason, setMutationReason] = useState("");
+  const [mutationEventDate, setMutationEventDate] = useState("");
   const [mutationRequests, setMutationRequests] = useState<MutationRequest[]>(
     [],
   );
@@ -1131,10 +1175,16 @@ export function App() {
 
     const mutationPayload: Record<string, unknown> = {
       mutation_type: mutationType,
-      mode: "regular",
-      requested_quarter: mutationQuarter,
+      mode: mutationMode,
     };
-    if (mutationType === "address") {
+    if (mutationMode === "special") {
+      mutationPayload.event_date = mutationEventDate;
+      mutationPayload.reason = mutationReason;
+    }
+    if (mutationMode === "regular") {
+      mutationPayload.requested_quarter = mutationQuarter;
+    }
+    if (mutationMode === "regular" && mutationType === "address") {
       mutationPayload.new_address = {
         street: addressStreet,
         postal_code: addressPostalCode,
@@ -1142,18 +1192,21 @@ export function App() {
         country: addressCountry,
       };
     }
-    if (mutationType === "meter_point") {
+    if (mutationMode === "regular" && mutationType === "meter_point") {
       mutationPayload.metering_code = meteringCode;
     }
-    if (mutationType === "role") {
+    if (mutationMode === "regular" && mutationType === "role") {
       mutationPayload.requested_role = requestedRole;
     }
-    if (mutationType === "generation_asset") {
+    if (mutationMode === "regular" && mutationType === "generation_asset") {
       mutationPayload.technology = generationTechnology;
       mutationPayload.installed_capacity_kw = Number(installedCapacityKw);
       mutationPayload.commissioned_on = commissionedOn;
     }
-    if (mutationType === "entry" || mutationType === "exit") {
+    if (
+      mutationMode === "regular" &&
+      (mutationType === "entry" || mutationType === "exit")
+    ) {
       mutationPayload.reason = mutationReason;
     }
 
@@ -1337,35 +1390,58 @@ export function App() {
   const addressMutationForm = (
     <section className="address-mutations" aria-label="Meldepflichtige Mutation">
       <form className="invitation-form address-mutation-form" onSubmit={submitMutation}>
-        <h3>{mutationTypeLabel(mutationType)}</h3>
+        <h3>
+          {mutationMode === "special"
+            ? "Sondermutation"
+            : mutationTypeLabel(mutationType)}
+        </h3>
         <label>
-          Mutationstyp
+          Mutationsmodus
+          <select
+            value={mutationMode}
+            onChange={(event) => {
+              const nextMode = event.target.value as MutationMode;
+              setMutationMode(nextMode);
+              setMutationType(nextMode === "special" ? "move_out" : "address");
+            }}
+          >
+            <option value="regular">Regulaere Quartalsmutation</option>
+            <option value="special">Sondermutation</option>
+          </select>
+        </label>
+        <label>
+          {mutationMode === "special" ? "Sondermutationstyp" : "Mutationstyp"}
           <select
             value={mutationType}
             onChange={(event) =>
               setMutationType(event.target.value as MutationType)
             }
           >
-            {mutationTypeOptions.map((option) => (
+            {(mutationMode === "special"
+              ? specialMutationTypeOptions
+              : regularMutationTypeOptions
+            ).map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
             ))}
           </select>
         </label>
-        <label>
-          Quartal
-          <select
-            value={mutationQuarter}
-            onChange={(event) => setMutationQuarter(event.target.value)}
-          >
-            <option value="2026-Q1">2026-Q1</option>
-            <option value="2026-Q2">2026-Q2</option>
-            <option value="2026-Q3">2026-Q3</option>
-            <option value="2026-Q4">2026-Q4</option>
-          </select>
-        </label>
-        {mutationType === "address" ? (
+        {mutationMode === "regular" ? (
+          <label>
+            Quartal
+            <select
+              value={mutationQuarter}
+              onChange={(event) => setMutationQuarter(event.target.value)}
+            >
+              <option value="2026-Q1">2026-Q1</option>
+              <option value="2026-Q2">2026-Q2</option>
+              <option value="2026-Q3">2026-Q3</option>
+              <option value="2026-Q4">2026-Q4</option>
+            </select>
+          </label>
+        ) : null}
+        {mutationMode === "regular" && mutationType === "address" ? (
           <>
             <label>
               Strasse
@@ -1405,7 +1481,7 @@ export function App() {
             </label>
           </>
         ) : null}
-        {mutationType === "meter_point" ? (
+        {mutationMode === "regular" && mutationType === "meter_point" ? (
           <label>
             Messpunktcode
             <input
@@ -1416,7 +1492,7 @@ export function App() {
             />
           </label>
         ) : null}
-        {mutationType === "role" ? (
+        {mutationMode === "regular" && mutationType === "role" ? (
           <label>
             Gewuenschte Rolle
             <select
@@ -1431,7 +1507,7 @@ export function App() {
             </select>
           </label>
         ) : null}
-        {mutationType === "generation_asset" ? (
+        {mutationMode === "regular" && mutationType === "generation_asset" ? (
           <>
             <label>
               Technologie
@@ -1464,7 +1540,8 @@ export function App() {
             </label>
           </>
         ) : null}
-        {mutationType === "entry" || mutationType === "exit" ? (
+        {mutationMode === "regular" &&
+        (mutationType === "entry" || mutationType === "exit") ? (
           <label>
             Grund
             <input
@@ -1475,9 +1552,33 @@ export function App() {
             />
           </label>
         ) : null}
+        {mutationMode === "special" ? (
+          <>
+            <label>
+              Ereignisdatum
+              <input
+                type="date"
+                value={mutationEventDate}
+                onChange={(event) => setMutationEventDate(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Begruendung
+              <input
+                type="text"
+                value={mutationReason}
+                onChange={(event) => setMutationReason(event.target.value)}
+                required
+              />
+            </label>
+          </>
+        ) : null}
         <button type="submit">
-          {mutationType === "address"
-            ? "Adressmutation einreichen"
+          {mutationMode === "special"
+            ? "Sondermutation einreichen"
+            : mutationType === "address"
+              ? "Adressmutation einreichen"
             : "Mutation einreichen"}
         </button>
         {mutationError ? (
@@ -1490,9 +1591,17 @@ export function App() {
         <section className="mutation-list" aria-label="Meine Mutationen">
           <h3>Meine Mutationen</h3>
           {mutationRequests.map((mutationRequest) => (
-            <div key={mutationRequest.id}>
+            <div
+              className={`mutation-list-item mutation-list-item--${mutationRequest.mode}`}
+              key={mutationRequest.id}
+            >
+              <p className="mutation-mode-badge">
+                {mutationRequest.mode === "special"
+                  ? "Sondermutation"
+                  : "Regulaere Mutation"}
+              </p>
               <p>{mutationTypeLabel(mutationRequest.mutation_type)}</p>
-              <p>{mutationRequest.quarter}</p>
+              <p>{mutationRequest.quarter ?? "Kein regulaeres Quartal"}</p>
               {mutationDetailLines(
                 mutationRequest.mutation_type,
                 mutationRequest.mutation_details,
@@ -1501,7 +1610,9 @@ export function App() {
                 <p key={line}>{line}</p>
               ))}
               <p>Status: {mutationRequest.status}</p>
-              <p>Teilnehmerfrist: {mutationRequest.participant_deadline}</p>
+              {mutationRequest.participant_deadline ? (
+                <p>Teilnehmerfrist: {mutationRequest.participant_deadline}</p>
+              ) : null}
               <p>Wirksam ab: {mutationRequest.effective_date}</p>
             </div>
           ))}
@@ -1516,11 +1627,19 @@ export function App() {
       {adminMutationRequests.length > 0 ? (
         <div className="admin-mutation-list">
           {adminMutationRequests.map((mutationRequest) => (
-            <div className="admin-mutation-item" key={mutationRequest.id}>
+            <div
+              className={`admin-mutation-item admin-mutation-item--${mutationRequest.mode}`}
+              key={mutationRequest.id}
+            >
               <p>{mutationRequest.participant.display_name}</p>
               <p>{mutationRequest.participant.email}</p>
+              <p className="mutation-mode-badge">
+                {mutationRequest.mode === "special"
+                  ? "Sondermutation"
+                  : "Regulaere Mutation"}
+              </p>
               <p>{mutationTypeLabel(mutationRequest.mutation_type)}</p>
-              <p>{mutationRequest.quarter}</p>
+              <p>{mutationRequest.quarter ?? "Kein regulaeres Quartal"}</p>
               {mutationDetailLines(
                 mutationRequest.mutation_type,
                 mutationRequest.mutation_details,
@@ -1529,7 +1648,9 @@ export function App() {
                 <p key={line}>{line}</p>
               ))}
               <p>Status: {mutationRequest.status}</p>
-              <p>Teilnehmerfrist: {mutationRequest.participant_deadline}</p>
+              {mutationRequest.participant_deadline ? (
+                <p>Teilnehmerfrist: {mutationRequest.participant_deadline}</p>
+              ) : null}
               {mutationRequest.review_reason ? (
                 <p>{mutationRequest.review_reason}</p>
               ) : null}
