@@ -62,3 +62,7 @@ Das Frontend läuft standardmässig unter `http://127.0.0.1:5173` und leitet `/a
 ### Datenbank-Migrationen
 
 Die Backend-Struktur ist für SQLModel und Alembic vorbereitet. Lokale Migrationen verwenden standardmässig `sqlite:///./sunterra-leg-portal.db`; produktionsnahe Umgebungen setzen `SUNTERRA_DATABASE_URL`.
+
+### Production Readiness
+
+Die ersten produktionsnahen Smoke Checks fuer Konfiguration, frische Migrationen und Backup/Restore sind in `docs/ops/production-readiness.md` dokumentiert.

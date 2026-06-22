@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from sunterra_leg_portal.auth import CurrentUser, Role, current_user, require_roles
+from sunterra_leg_portal.config import production_lifespan
 
 
 LOCAL_DEV_ORIGINS = [
@@ -23,7 +24,7 @@ class ParticipantList(BaseModel):
     participants: list[dict[str, str]]
 
 
-app = FastAPI(title="SunTerra LEG Portal", version="0.1.0")
+app = FastAPI(title="SunTerra LEG Portal", version="0.1.0", lifespan=production_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=LOCAL_DEV_ORIGINS,
