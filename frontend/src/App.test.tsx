@@ -963,6 +963,126 @@ describe("Portal shell", () => {
     expect(history.getByText("hash-onboarding-document")).toBeTruthy();
   });
 
+  it("reicht als Teilnehmer eine regulaere Adressmutation ein und zeigt Status und Wirksamkeitsdatum", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "participant-anna",
+            email: "anna.keller@example.test",
+            display_name: "Anna Keller",
+            role: "participant",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/documents/current?document_key=portal_terms")) {
+        return new Response(JSON.stringify({ detail: "Document version not found" }), {
+          status: 404,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/participants/me/mutation-requests")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:participant",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          mutation_type: "address",
+          mode: "regular",
+          requested_quarter: "2026-Q3",
+          new_address: {
+            street: "Hauptstrasse 7",
+            postal_code: "8254",
+            city: "Basadingen",
+            country: "CH",
+          },
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "mutation-request-1",
+            participant_id: "participant-anna",
+            leg_id: "basadingen",
+            mutation_type: "address",
+            mode: "regular",
+            status: "submitted",
+            quarter: "2026-Q3",
+            quarter_end: "2026-09-30",
+            participant_deadline: "2026-06-30",
+            effective_date: "2026-10-01",
+            submitted_at: "2026-06-15T12:00:00+00:00",
+            new_address: {
+              street: "Hauptstrasse 7",
+              postal_code: "8254",
+              city: "Basadingen",
+              country: "CH",
+            },
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    screen.getByRole("button", { name: "Teilnehmer" }).click();
+
+    expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Quartal"), {
+      target: { value: "2026-Q3" },
+    });
+    fireEvent.change(screen.getByLabelText("Strasse"), {
+      target: { value: "Hauptstrasse 7" },
+    });
+    fireEvent.change(screen.getByLabelText("PLZ"), {
+      target: { value: "8254" },
+    });
+    fireEvent.change(screen.getByLabelText("Ort"), {
+      target: { value: "Basadingen" },
+    });
+    fireEvent.change(screen.getByLabelText("Land"), {
+      target: { value: "CH" },
+    });
+    screen.getByRole("button", { name: "Adressmutation einreichen" }).click();
+
+    expect(await screen.findByText("Meine Mutationen")).toBeTruthy();
+    const mutations = within(screen.getByLabelText("Meine Mutationen"));
+    expect(mutations.getByText("2026-Q3")).toBeTruthy();
+    expect(mutations.getByText("Status: submitted")).toBeTruthy();
+    expect(mutations.getByText("Wirksam ab: 2026-10-01")).toBeTruthy();
+  });
+
   it("zeigt einen verständlichen Status, wenn das Backend nicht erreichbar ist", async () => {
     vi.stubGlobal(
       "fetch",

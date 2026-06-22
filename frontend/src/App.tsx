@@ -71,6 +71,26 @@ type ConsentEvidence = {
   accepted_at: string;
 };
 
+type MutationRequest = {
+  id: string;
+  participant_id: string;
+  leg_id: "basadingen";
+  mutation_type: "address";
+  mode: "regular";
+  status: "submitted";
+  quarter: string;
+  quarter_end: string;
+  participant_deadline: string;
+  effective_date: string;
+  submitted_at: string;
+  new_address: {
+    street: string;
+    postal_code: string;
+    city: string;
+    country: string;
+  };
+};
+
 type BackendState =
   | { kind: "checking" }
   | { kind: "connected"; health: HealthStatus }
@@ -128,6 +148,15 @@ export function App() {
   const [consentChecked, setConsentChecked] = useState(false);
   const [consentSaved, setConsentSaved] = useState(false);
   const [consentHistory, setConsentHistory] = useState<ConsentEvidence[]>([]);
+  const [mutationQuarter, setMutationQuarter] = useState("2026-Q3");
+  const [addressStreet, setAddressStreet] = useState("");
+  const [addressPostalCode, setAddressPostalCode] = useState("");
+  const [addressCity, setAddressCity] = useState("");
+  const [addressCountry, setAddressCountry] = useState("CH");
+  const [mutationRequests, setMutationRequests] = useState<MutationRequest[]>(
+    [],
+  );
+  const [mutationError, setMutationError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -293,6 +322,43 @@ export function App() {
     }
   }
 
+  async function submitAddressMutation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setMutationError("");
+    const response = await fetch(`${apiBaseUrl}/api/participants/me/mutation-requests`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        mutation_type: "address",
+        mode: "regular",
+        requested_quarter: mutationQuarter,
+        new_address: {
+          street: addressStreet,
+          postal_code: addressPostalCode,
+          city: addressCity,
+          country: addressCountry,
+        },
+      }),
+    });
+
+    if (response.ok) {
+      const mutationRequest = (await response.json()) as MutationRequest;
+      setMutationRequests((current) => [...current, mutationRequest]);
+      return;
+    }
+
+    const error = (await response.json()) as { detail?: string };
+    setMutationError(error.detail ?? "Mutation konnte nicht eingereicht werden");
+  }
+
   async function acceptParticipantInvitation(
     event: FormEvent<HTMLFormElement>,
   ) {
@@ -394,6 +460,80 @@ export function App() {
     </form>
   ) : null;
 
+  const addressMutationForm = (
+    <section className="address-mutations" aria-label="Adressmutation">
+      <form className="invitation-form address-mutation-form" onSubmit={submitAddressMutation}>
+        <h3>Adressmutation</h3>
+        <label>
+          Quartal
+          <select
+            value={mutationQuarter}
+            onChange={(event) => setMutationQuarter(event.target.value)}
+          >
+            <option value="2026-Q1">2026-Q1</option>
+            <option value="2026-Q2">2026-Q2</option>
+            <option value="2026-Q3">2026-Q3</option>
+            <option value="2026-Q4">2026-Q4</option>
+          </select>
+        </label>
+        <label>
+          Strasse
+          <input
+            type="text"
+            value={addressStreet}
+            onChange={(event) => setAddressStreet(event.target.value)}
+            required
+          />
+        </label>
+        <label>
+          PLZ
+          <input
+            type="text"
+            value={addressPostalCode}
+            onChange={(event) => setAddressPostalCode(event.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Ort
+          <input
+            type="text"
+            value={addressCity}
+            onChange={(event) => setAddressCity(event.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Land
+          <input
+            type="text"
+            value={addressCountry}
+            onChange={(event) => setAddressCountry(event.target.value)}
+            required
+          />
+        </label>
+        <button type="submit">Adressmutation einreichen</button>
+        {mutationError ? (
+          <div className="mutation-error" role="alert">
+            <p>{mutationError}</p>
+          </div>
+        ) : null}
+      </form>
+      {mutationRequests.length > 0 ? (
+        <section className="mutation-list" aria-label="Meine Mutationen">
+          <h3>Meine Mutationen</h3>
+          {mutationRequests.map((mutationRequest) => (
+            <div key={mutationRequest.id}>
+              <p>{mutationRequest.quarter}</p>
+              <p>Status: {mutationRequest.status}</p>
+              <p>Wirksam ab: {mutationRequest.effective_date}</p>
+            </div>
+          ))}
+        </section>
+      ) : null}
+    </section>
+  );
+
   return (
     <main className="portal-shell">
       <section className="hero-band" aria-labelledby="portal-title">
@@ -454,6 +594,7 @@ export function App() {
               </div>
             ) : null}
             {documentConsentForm}
+            {addressMutationForm}
           </div>
         ) : session.kind === "authenticated" && activeWorkspace ? (
           <div>
@@ -539,7 +680,12 @@ export function App() {
                 ) : null}
               </form>
             ) : null}
-            {session.user.role === "participant" ? documentConsentForm : null}
+            {session.user.role === "participant" ? (
+              <>
+                {documentConsentForm}
+                {addressMutationForm}
+              </>
+            ) : null}
           </div>
         ) : (
           <>
