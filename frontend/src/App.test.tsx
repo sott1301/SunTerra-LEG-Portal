@@ -2186,3 +2186,110 @@ describe("Portal shell", () => {
     ).toBeTruthy();
   });
 });
+
+it("reicht als Teilnehmer eine regulaere Rollenmutation ein und zeigt Typ und Details", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+
+    if (url.endsWith("/api/me")) {
+      return new Response(
+        JSON.stringify({
+          id: "participant-anna",
+          email: "anna.keller@example.test",
+          display_name: "Anna Keller",
+          role: "participant",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    }
+
+    if (url.endsWith("/api/documents/current?document_key=portal_terms")) {
+      return new Response(JSON.stringify({ detail: "Document version not found" }), {
+        status: 404,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    }
+
+    if (url.endsWith("/api/participants/me/mutation-requests")) {
+      expect(init?.method).toBe("POST");
+      expect(init?.headers).toEqual({
+        Authorization: "Bearer dev:participant",
+        "Content-Type": "application/json",
+      });
+      expect(JSON.parse(init?.body as string)).toEqual({
+        mutation_type: "role",
+        mode: "regular",
+        requested_quarter: "2026-Q3",
+        requested_role: "owner",
+      });
+
+      return new Response(
+        JSON.stringify({
+          id: "mutation-request-role",
+          participant_id: "participant-anna",
+          leg_id: "basadingen",
+          mutation_type: "role",
+          mode: "regular",
+          status: "submitted",
+          quarter: "2026-Q3",
+          quarter_end: "2026-09-30",
+          participant_deadline: "2026-06-30",
+          effective_date: "2026-10-01",
+          submitted_at: "2026-06-15T12:00:00+00:00",
+          new_address: null,
+          mutation_details: {
+            requested_role: "owner",
+          },
+        }),
+        {
+          status: 201,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        status: "ok",
+        service: "sunterra-leg-portal",
+        version: "0.1.0",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<App />);
+  screen.getByRole("button", { name: "Teilnehmer" }).click();
+
+  expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+
+  fireEvent.change(screen.getByLabelText("Mutationstyp"), {
+    target: { value: "role" },
+  });
+  fireEvent.change(screen.getByLabelText("Quartal"), {
+    target: { value: "2026-Q3" },
+  });
+  fireEvent.change(screen.getByLabelText("Gewuenschte Rolle"), {
+    target: { value: "owner" },
+  });
+  screen.getByRole("button", { name: "Mutation einreichen" }).click();
+
+  expect(await screen.findByText("Meine Mutationen")).toBeTruthy();
+  const mutations = within(screen.getByLabelText("Meine Mutationen"));
+  expect(mutations.getByText("Rollenmutation")).toBeTruthy();
+  expect(mutations.getByText("Rolle: Eigentuemer")).toBeTruthy();
+  expect(mutations.getByText("Wirksam ab: 2026-10-01")).toBeTruthy();
+});

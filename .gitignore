@@ -28,5 +28,6 @@ Thumbs.db
 
 # Temporary files
 *.log
+pytest-*/
 tmp/
 temp/
