@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
 
@@ -126,10 +126,41 @@ class ConsentEvidenceRead(BaseModel):
     accepted_at: str
 
 
+class AddressRead(BaseModel):
+    street: str
+    postal_code: str
+    city: str
+    country: str
+
+
+class MutationRequestCreate(BaseModel):
+    mutation_type: str
+    mode: str
+    requested_quarter: str
+    submitted_on: date | None = None
+    new_address: AddressRead
+
+
+class MutationRequestRead(BaseModel):
+    id: str
+    participant_id: str
+    leg_id: str
+    mutation_type: str
+    mode: str
+    status: str
+    quarter: str
+    quarter_end: str
+    participant_deadline: str
+    effective_date: str
+    submitted_at: str
+    new_address: AddressRead
+
+
 INVITATIONS: dict[str, ParticipantInvitationRecord] = {}
 PARTICIPANTS: dict[str, ParticipantRecord] = {}
 DOCUMENT_VERSIONS: dict[str, DocumentVersionRecord] = {}
 CONSENT_EVIDENCE: dict[str, list[ConsentEvidenceRead]] = {}
+MUTATION_REQUESTS: dict[str, list[MutationRequestRead]] = {}
 
 
 def _document_hash(document: DocumentVersionCreate) -> str:
@@ -175,6 +206,47 @@ def _participant_membership_read(
         leg_name=BASADINGEN_LEG_NAME,
         membership_status=membership_status,
         billing_notice=PARTICIPANT_BILLING_NOTICE,
+    )
+
+
+def _regular_address_quarter_dates(quarter: str) -> tuple[str, str, str]:
+    try:
+        year_text, quarter_text = quarter.split("-Q", maxsplit=1)
+        year = int(year_text)
+        quarter_number = int(quarter_text)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Requested quarter must use YYYY-Q1 through YYYY-Q4",
+        ) from exc
+
+    if quarter_number not in {1, 2, 3, 4}:
+        raise HTTPException(
+            status_code=400,
+            detail="Requested quarter must use YYYY-Q1 through YYYY-Q4",
+        )
+
+    quarter_end_by_number = {
+        1: date(year, 3, 31),
+        2: date(year, 6, 30),
+        3: date(year, 9, 30),
+        4: date(year, 12, 31),
+    }
+    participant_deadline_by_number = {
+        1: date(year - 1, 12, 31),
+        2: date(year, 3, 31),
+        3: date(year, 6, 30),
+        4: date(year, 9, 30),
+    }
+
+    quarter_end = quarter_end_by_number[quarter_number]
+    participant_deadline = participant_deadline_by_number[quarter_number]
+    effective_date = quarter_end + timedelta(days=1)
+
+    return (
+        participant_deadline.isoformat(),
+        quarter_end.isoformat(),
+        effective_date.isoformat(),
     )
 
 
@@ -318,6 +390,67 @@ def participant_consent_history(
     participant = _verified_participant(user)
 
     return CONSENT_EVIDENCE.get(participant.id, [])
+
+
+@app.post(
+    "/api/participants/me/mutation-requests",
+    response_model=MutationRequestRead,
+    status_code=201,
+)
+def create_participant_mutation_request(
+    mutation: MutationRequestCreate,
+    user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
+) -> MutationRequestRead:
+    participant = _verified_participant(user)
+    if mutation.mutation_type != "address" or mutation.mode != "regular":
+        raise HTTPException(
+            status_code=400,
+            detail="Only regular address mutations are supported",
+        )
+
+    participant_deadline, quarter_end, effective_date = (
+        _regular_address_quarter_dates(mutation.requested_quarter)
+    )
+    submitted_on = mutation.submitted_on or date.today()
+    if submitted_on > date.fromisoformat(participant_deadline):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Regular address mutation for {mutation.requested_quarter} "
+                "must be submitted by participant deadline "
+                f"{participant_deadline}"
+            ),
+        )
+
+    mutation_request = MutationRequestRead(
+        id=uuid4().hex,
+        participant_id=participant.id,
+        leg_id=participant.leg_id,
+        mutation_type=mutation.mutation_type,
+        mode=mutation.mode,
+        status="submitted",
+        quarter=mutation.requested_quarter,
+        quarter_end=quarter_end,
+        participant_deadline=participant_deadline,
+        effective_date=effective_date,
+        submitted_at=datetime.now(UTC).isoformat(),
+        new_address=mutation.new_address,
+    )
+    MUTATION_REQUESTS.setdefault(participant.id, []).append(mutation_request)
+
+    return mutation_request
+
+
+@app.get(
+    "/api/participants/me/mutation-requests",
+    response_model=list[MutationRequestRead],
+)
+def participant_mutation_requests(
+    user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
+) -> list[MutationRequestRead]:
+    participant = _verified_participant(user)
+
+    return MUTATION_REQUESTS.get(participant.id, [])
 
 
 @app.post(
