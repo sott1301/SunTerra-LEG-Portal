@@ -24,7 +24,7 @@ select {
 .portal-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: minmax(360px, 1fr) auto auto;
 }
 
 .hero-band {
@@ -103,4 +103,42 @@ h1 {
 .status-detail {
   margin-top: 4px;
   color: #667085;
+}
+
+.workspace-panel {
+  display: grid;
+  gap: 18px;
+  padding: 28px clamp(24px, 8vw, 96px);
+  background: #edf2e8;
+  border-top: 1px solid #d8ded2;
+}
+
+.workspace-panel h2,
+.workspace-panel p {
+  margin: 0;
+}
+
+.workspace-panel h2 {
+  font-size: 1.35rem;
+}
+
+.workspace-panel p {
+  margin-top: 6px;
+  color: #4b5563;
+}
+
+.role-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.role-actions button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #bdc9b4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  cursor: pointer;
 }

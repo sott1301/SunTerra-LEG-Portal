@@ -32,6 +32,17 @@ Backend starten:
 
 Der Health-Endpunkt ist danach unter `http://127.0.0.1:8000/api/health` erreichbar.
 
+Für die lokale Entwicklung gibt es eine einfache Demo-Authentifizierung:
+
+```http
+Authorization: Bearer dev:participant
+Authorization: Bearer dev:leg_admin
+Authorization: Bearer dev:partner_admin
+Authorization: Bearer dev:platform_admin
+```
+
+`GET /api/me` liefert damit die aktuelle Demo-Identität und Rolle. Diese Development-Auth ist nur ein austauschbarer Einstieg für die ersten Portal-Slices.
+
 ### Frontend einrichten und testen
 
 ```powershell
