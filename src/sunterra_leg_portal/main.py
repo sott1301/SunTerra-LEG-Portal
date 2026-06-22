@@ -195,8 +195,9 @@ class AddressRead(BaseModel):
 class MutationRequestCreate(BaseModel):
     mutation_type: str
     mode: str
-    requested_quarter: str
+    requested_quarter: str | None = None
     submitted_on: date | None = None
+    event_date: date | None = None
     new_address: AddressRead | None = None
     metering_code: str | None = None
     requested_role: str | None = None
@@ -213,9 +214,9 @@ class MutationRequestRead(BaseModel):
     mutation_type: str
     mode: str
     status: str
-    quarter: str
-    quarter_end: str
-    participant_deadline: str
+    quarter: str | None
+    quarter_end: str | None
+    participant_deadline: str | None
     effective_date: str
     submitted_at: str
     new_address: AddressRead | None = None
@@ -431,6 +432,25 @@ SUPPORTED_PARTNER_PACKAGE_STATUSES = {
     "technically_not_possible",
 }
 SUPPORTED_MUTATION_ROLES = {"owner", "tenant", "producer", "prosumer"}
+SUPPORTED_REGULAR_MUTATION_TYPES = {
+    "address",
+    "meter_point",
+    "role",
+    "generation_asset",
+    "entry",
+    "exit",
+}
+SUPPORTED_SPECIAL_MUTATION_TYPES = {
+    "move_out",
+    "death",
+    "owner_tenant_change",
+    "meter_point_error",
+    "municipality_utility_correction",
+}
+REGULAR_MUTATION_SUPPORT_ERROR = (
+    "Only regular address, meter point, role, generation asset, entry, "
+    "and exit mutations are supported"
+)
 
 
 def _document_hash(document: DocumentVersionCreate) -> str:
@@ -1553,95 +1573,117 @@ def create_participant_mutation_request(
     user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
 ) -> MutationRequestRead:
     participant = _verified_participant(user)
-    if mutation.mode != "regular" or mutation.mutation_type not in {
-        "address",
-        "meter_point",
-        "role",
-        "generation_asset",
-        "entry",
-        "exit",
-    }:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Only regular address, meter point, role, generation asset, "
-                "entry, and exit mutations are supported"
-            ),
-        )
-    if mutation.mutation_type == "address":
-        if mutation.new_address is None:
+    if mutation.mode == "special":
+        if mutation.mutation_type not in SUPPORTED_SPECIAL_MUTATION_TYPES:
             raise HTTPException(
                 status_code=400,
-                detail="Address mutation requires new_address",
+                detail=REGULAR_MUTATION_SUPPORT_ERROR,
             )
-        mutation_details = {
-            "street": mutation.new_address.street,
-            "postal_code": mutation.new_address.postal_code,
-            "city": mutation.new_address.city,
-            "country": mutation.new_address.country,
-        }
-    elif mutation.mutation_type == "meter_point":
-        metering_code = (mutation.metering_code or "").strip()
-        if not metering_code:
-            raise HTTPException(
-                status_code=400,
-                detail="Meter point mutation requires metering_code",
-            )
-        mutation_details = {"metering_code": metering_code}
-    elif mutation.mutation_type == "role":
-        requested_role = (mutation.requested_role or "").strip()
-        if requested_role not in SUPPORTED_MUTATION_ROLES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Role mutation requested_role must be one of owner, "
-                    "producer, prosumer, tenant"
-                ),
-            )
-        mutation_details = {"requested_role": requested_role}
-    elif mutation.mutation_type in {"entry", "exit"}:
         reason = (mutation.reason or "").strip()
         if not reason:
             raise HTTPException(
                 status_code=400,
-                detail=f"{mutation.mutation_type.capitalize()} mutation requires reason",
+                detail="Special mutation requires reason",
             )
-        mutation_details = {"reason": reason}
-    else:
-        technology = (mutation.technology or "").strip()
-        if (
-            not technology
-            or mutation.installed_capacity_kw is None
-            or mutation.installed_capacity_kw <= 0
-            or mutation.commissioned_on is None
-        ):
+        if mutation.event_date is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Special mutation requires event_date",
+            )
+        mutation_details = {
+            "reason": reason,
+            "event_date": mutation.event_date.isoformat(),
+        }
+        quarter = None
+        quarter_end = None
+        participant_deadline = None
+        effective_date = mutation.event_date.isoformat()
+    elif mutation.mode == "regular":
+        if mutation.mutation_type not in SUPPORTED_REGULAR_MUTATION_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=REGULAR_MUTATION_SUPPORT_ERROR,
+            )
+        if mutation.mutation_type == "address":
+            if mutation.new_address is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Address mutation requires new_address",
+                )
+            mutation_details = {
+                "street": mutation.new_address.street,
+                "postal_code": mutation.new_address.postal_code,
+                "city": mutation.new_address.city,
+                "country": mutation.new_address.country,
+            }
+        elif mutation.mutation_type == "meter_point":
+            metering_code = (mutation.metering_code or "").strip()
+            if not metering_code:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Meter point mutation requires metering_code",
+                )
+            mutation_details = {"metering_code": metering_code}
+        elif mutation.mutation_type == "role":
+            requested_role = (mutation.requested_role or "").strip()
+            if requested_role not in SUPPORTED_MUTATION_ROLES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Role mutation requested_role must be one of owner, "
+                        "producer, prosumer, tenant"
+                    ),
+                )
+            mutation_details = {"requested_role": requested_role}
+        elif mutation.mutation_type in {"entry", "exit"}:
+            reason = (mutation.reason or "").strip()
+            if not reason:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{mutation.mutation_type.capitalize()} mutation requires reason",
+                )
+            mutation_details = {"reason": reason}
+        else:
+            technology = (mutation.technology or "").strip()
+            if (
+                not technology
+                or mutation.installed_capacity_kw is None
+                or mutation.installed_capacity_kw <= 0
+                or mutation.commissioned_on is None
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Generation asset mutation requires technology, positive "
+                        "installed_capacity_kw, and commissioned_on"
+                    ),
+                )
+            mutation_details = {
+                "technology": technology,
+                "installed_capacity_kw": mutation.installed_capacity_kw,
+                "commissioned_on": mutation.commissioned_on.isoformat(),
+            }
+
+        participant_deadline, quarter_end, effective_date = (
+            _regular_address_quarter_dates(mutation.requested_quarter or "")
+        )
+        if mutation.mutation_type == "exit":
+            effective_date = quarter_end
+        submitted_on = mutation.submitted_on or date.today()
+        if submitted_on > date.fromisoformat(participant_deadline):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Generation asset mutation requires technology, positive "
-                    "installed_capacity_kw, and commissioned_on"
+                    f"Regular address mutation for {mutation.requested_quarter} "
+                    "must be submitted by participant deadline "
+                    f"{participant_deadline}"
                 ),
             )
-        mutation_details = {
-            "technology": technology,
-            "installed_capacity_kw": mutation.installed_capacity_kw,
-            "commissioned_on": mutation.commissioned_on.isoformat(),
-        }
-
-    participant_deadline, quarter_end, effective_date = (
-        _regular_address_quarter_dates(mutation.requested_quarter)
-    )
-    if mutation.mutation_type == "exit":
-        effective_date = quarter_end
-    submitted_on = mutation.submitted_on or date.today()
-    if submitted_on > date.fromisoformat(participant_deadline):
+        quarter = mutation.requested_quarter
+    else:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Regular address mutation for {mutation.requested_quarter} "
-                "must be submitted by participant deadline "
-                f"{participant_deadline}"
-            ),
+            detail=REGULAR_MUTATION_SUPPORT_ERROR,
         )
 
     mutation_request = MutationRequestRecord(
@@ -1651,7 +1693,7 @@ def create_participant_mutation_request(
         mutation_type=mutation.mutation_type,
         mode=mutation.mode,
         status="submitted",
-        quarter=mutation.requested_quarter,
+        quarter=quarter,
         quarter_end=quarter_end,
         participant_deadline=participant_deadline,
         effective_date=effective_date,

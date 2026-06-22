@@ -356,6 +356,31 @@ h1 {
   gap: 4px;
 }
 
+.mutation-list-item,
+.admin-mutation-item {
+  border-left: 4px solid #2f6f3e;
+}
+
+.mutation-list-item {
+  padding: 10px;
+  background: #f7faf5;
+}
+
+.mutation-list-item--special {
+  border-left-color: #b45309;
+}
+
+.mutation-mode-badge {
+  width: fit-content;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #7c2d12;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
 .mutation-error {
   display: grid;
   gap: 4px;
@@ -396,6 +421,10 @@ h1 {
   padding: 12px;
   border-left: 4px solid #2f6f3e;
   background: #ffffff;
+}
+
+.admin-mutation-item--special {
+  border-left-color: #b45309;
 }
 
 .mutation-package-result {

@@ -490,6 +490,150 @@ describe("Portal shell", () => {
     ).toBeTruthy();
   });
 
+  it("zeigt LEG Admins Sondermutationen mit Grund und Ereignisdatum im Review-Inbox", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-leg-admin",
+            email: "leg-admin@example.test",
+            display_name: "LEG Admin Demo",
+            role: "leg_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/mutation-requests?status=submitted")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+        });
+
+        return new Response(
+          JSON.stringify([
+            {
+              id: "mutation-request-special-review",
+              participant_id: "participant-anna",
+              leg_id: "basadingen",
+              mutation_type: "move_out",
+              mode: "special",
+              status: "submitted",
+              quarter: null,
+              quarter_end: null,
+              participant_deadline: null,
+              effective_date: "2026-07-12",
+              submitted_at: "2026-06-22T12:00:00+00:00",
+              reviewed_at: null,
+              review_reason: null,
+              new_address: null,
+              mutation_details: {
+                reason: "Auszug wegen Wohnungswechsel.",
+                event_date: "2026-07-12",
+              },
+              participant: {
+                participant_id: "participant-anna",
+                display_name: "Anna Sonder",
+                email: "anna.sonder@example.test",
+              },
+              audit_events: [],
+            },
+          ]),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (
+        url.endsWith(
+          "/api/admin/mutation-requests/mutation-request-special-review/review-decision",
+        )
+      ) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          decision: "approved",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "mutation-request-special-review",
+            participant_id: "participant-anna",
+            leg_id: "basadingen",
+            mutation_type: "move_out",
+            mode: "special",
+            status: "approved",
+            quarter: null,
+            quarter_end: null,
+            participant_deadline: null,
+            effective_date: "2026-07-12",
+            submitted_at: "2026-06-22T12:00:00+00:00",
+            reviewed_at: "2026-06-22T12:30:00+00:00",
+            review_reason: null,
+            new_address: null,
+            mutation_details: {
+              reason: "Auszug wegen Wohnungswechsel.",
+              event_date: "2026-07-12",
+            },
+            participant: {
+              participant_id: "participant-anna",
+              display_name: "Anna Sonder",
+              email: "anna.sonder@example.test",
+            },
+            audit_events: [],
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    screen.getByRole("button", { name: "LEG Admin" }).click();
+
+    expect(await screen.findByText("Offene Mutationen")).toBeTruthy();
+    const inbox = within(screen.getByLabelText("Offene Mutationen"));
+    const specialRequest = within(inbox.getByText("Anna Sonder").closest("div")!);
+    expect(specialRequest.getByText("Sondermutation")).toBeTruthy();
+    expect(specialRequest.getByText("Auszug")).toBeTruthy();
+    expect(specialRequest.getByText("Grund: Auszug wegen Wohnungswechsel.")).toBeTruthy();
+    expect(specialRequest.getByText("Ereignisdatum: 2026-07-12")).toBeTruthy();
+    expect(specialRequest.getByText("Kein regulaeres Quartal")).toBeTruthy();
+    expect(specialRequest.queryByText(/Teilnehmerfrist:/)).toBeNull();
+
+    specialRequest.getByRole("button", { name: "Genehmigen" }).click();
+
+    expect(await specialRequest.findByText("Status: approved")).toBeTruthy();
+  });
+
   it("laedt als LEG Admin kontrollierte Datei-Nachweise fuer Mutationen hoch", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -2028,6 +2172,124 @@ describe("Portal shell", () => {
     expect(mutations.getByText("Status: submitted")).toBeTruthy();
     expect(mutations.getByText("Teilnehmerfrist: 2026-06-30")).toBeTruthy();
     expect(mutations.getByText("Wirksam ab: 2026-10-01")).toBeTruthy();
+  });
+
+  it("reicht als Teilnehmer eine Sondermutation ein und zeigt Grund und Ereignisdatum", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "participant-anna",
+            email: "anna.keller@example.test",
+            display_name: "Anna Keller",
+            role: "participant",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/documents/current?document_key=portal_terms")) {
+        return new Response(JSON.stringify({ detail: "Document version not found" }), {
+          status: 404,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/participants/me/mutation-requests")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:participant",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          mutation_type: "move_out",
+          mode: "special",
+          event_date: "2026-07-12",
+          reason: "Auszug wegen Wohnungswechsel.",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "mutation-request-special",
+            participant_id: "participant-anna",
+            leg_id: "basadingen",
+            mutation_type: "move_out",
+            mode: "special",
+            status: "submitted",
+            quarter: null,
+            quarter_end: null,
+            participant_deadline: null,
+            effective_date: "2026-07-12",
+            submitted_at: "2026-06-22T12:00:00+00:00",
+            reviewed_at: null,
+            review_reason: null,
+            new_address: null,
+            mutation_details: {
+              reason: "Auszug wegen Wohnungswechsel.",
+              event_date: "2026-07-12",
+            },
+            audit_events: [],
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    screen.getByRole("button", { name: "Teilnehmer" }).click();
+
+    expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Mutationsmodus"), {
+      target: { value: "special" },
+    });
+    fireEvent.change(screen.getByLabelText("Sondermutationstyp"), {
+      target: { value: "move_out" },
+    });
+    fireEvent.change(screen.getByLabelText("Ereignisdatum"), {
+      target: { value: "2026-07-12" },
+    });
+    fireEvent.change(screen.getByLabelText("Begruendung"), {
+      target: { value: "Auszug wegen Wohnungswechsel." },
+    });
+    screen.getByRole("button", { name: "Sondermutation einreichen" }).click();
+
+    expect(await screen.findByText("Meine Mutationen")).toBeTruthy();
+    const mutations = within(screen.getByLabelText("Meine Mutationen"));
+    expect(mutations.getByText("Sondermutation")).toBeTruthy();
+    expect(mutations.getByText("Auszug")).toBeTruthy();
+    expect(mutations.getByText("Grund: Auszug wegen Wohnungswechsel.")).toBeTruthy();
+    expect(mutations.getByText("Ereignisdatum: 2026-07-12")).toBeTruthy();
+    expect(mutations.getByText("Kein regulaeres Quartal")).toBeTruthy();
+    expect(mutations.getByText("Status: submitted")).toBeTruthy();
+    expect(mutations.getByText("Wirksam ab: 2026-07-12")).toBeTruthy();
   });
 
   it("zeigt beim Self-Service den Identitätscheckpoint und schaltet Mitgliedschaft erst nach Verifizierung frei", async () => {
