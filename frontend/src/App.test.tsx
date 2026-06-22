@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -486,6 +486,142 @@ describe("Portal shell", () => {
     expect(
       screen.getByText("Adresse gehoert nicht zum LEG Perimeter."),
     ).toBeTruthy();
+  });
+
+  it("erstellt als LEG Admin ein Mutationspaket und zeigt Exportlinks", async () => {
+    const packageResponse = {
+      schema_version: "mutation-package.v1",
+      package_id: "package-ui-1",
+      leg_id: "basadingen",
+      quarter: "2026-Q3",
+      effective_date: "2026-10-01",
+      records: [],
+      hash: "hash-ui-package",
+      generated_at: "2026-06-22T12:00:00+00:00",
+      status_history: [
+        {
+          status: "created",
+          actor_id: "dev-leg-admin",
+          actor_role: "leg_admin",
+          created_at: "2026-06-22T12:00:00+00:00",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-leg-admin",
+            email: "leg-admin@example.test",
+            display_name: "LEG Admin Demo",
+            role: "leg_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/mutation-requests?status=submitted")) {
+        return new Response(JSON.stringify([]), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/admin/mutation-packages")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          quarter: "2026-Q3",
+        });
+
+        return new Response(JSON.stringify(packageResponse), {
+          status: 201,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/admin/mutation-packages/package-ui-1/json")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+        });
+
+        return new Response(JSON.stringify(packageResponse), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(URL, "createObjectURL", {
+      writable: true,
+      value: vi.fn(() => "blob:package-ui-json"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      writable: true,
+      value: vi.fn(),
+    });
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+
+    render(<App />);
+    screen.getByRole("button", { name: "LEG Admin" }).click();
+
+    expect(await screen.findByText("Mutationspakete")).toBeTruthy();
+    const packages = within(screen.getByLabelText("Mutationspakete"));
+    fireEvent.change(packages.getByLabelText("Paketquartal"), {
+      target: { value: "2026-Q3" },
+    });
+    packages.getByRole("button", { name: "Paket erstellen" }).click();
+
+    expect(await packages.findByText("Paket package-ui-1")).toBeTruthy();
+    const createdPackage = within(
+      screen.getByLabelText("Erstelltes Mutationspaket"),
+    );
+    expect(createdPackage.getByText("2026-Q3")).toBeTruthy();
+    expect(createdPackage.getByText("Wirksam ab: 2026-10-01")).toBeTruthy();
+    expect(createdPackage.getByText("Hash hash-ui-package")).toBeTruthy();
+    createdPackage.getByRole("button", { name: "JSON" }).click();
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          input.toString().endsWith(
+            "/api/admin/mutation-packages/package-ui-1/json",
+          ),
+        ),
+      ).toBe(true),
+    );
+    expect(URL.createObjectURL).toHaveBeenCalled();
+    expect(anchorClick).toHaveBeenCalled();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:package-ui-json");
+    expect(createdPackage.getByRole("button", { name: "CSV" })).toBeTruthy();
+    expect(createdPackage.getByRole("button", { name: "PDF" })).toBeTruthy();
   });
 
   it("veroeffentlicht als Plattform-Admin eine Dokumentversion", async () => {
@@ -1188,6 +1324,158 @@ describe("Portal shell", () => {
     const history = within(screen.getByLabelText("Einwilligungshistorie"));
     expect(history.getByText("Version 2026-06-22")).toBeTruthy();
     expect(history.getByText("hash-onboarding-document")).toBeTruthy();
+  });
+
+  it("zeigt Kontaktkanaele im Teilnehmerbereich und speichert direkte Updates", async () => {
+    let saveAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "participant-anna",
+            email: "anna.keller@example.test",
+            display_name: "Anna Keller",
+            role: "participant",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/documents/current?document_key=portal_terms")) {
+        return new Response(JSON.stringify({ detail: "Document version not found" }), {
+          status: 404,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/participants/me/contact-channels")) {
+        if (init?.method === "PATCH") {
+          saveAttempts += 1;
+          expect(init.headers).toEqual({
+            Authorization: "Bearer dev:participant",
+            "Content-Type": "application/json",
+          });
+          expect(JSON.parse(init.body as string)).toEqual({
+            phone_number: "+41 52 555 99 88",
+            preferred_contact_channel: "phone",
+          });
+
+          if (saveAttempts === 1) {
+            return new Response(
+              JSON.stringify({ detail: "Kontaktkanaele konnten nicht gespeichert werden" }),
+              {
+                status: 400,
+                headers: {
+                  "Content-Type": "application/json",
+                },
+              },
+            );
+          }
+
+          return new Response(
+            JSON.stringify({
+              participant_id: "participant-anna",
+              email: "anna.keller@example.test",
+              phone_number: "+41 52 555 99 88",
+              preferred_contact_channel: "phone",
+              audit_events: [
+                {
+                  id: "contact-audit-1",
+                  action: "participant.contact_channels_updated",
+                  actor_role: "participant",
+                  created_at: "2026-06-22T12:00:00+00:00",
+                  from_status: null,
+                  to_status: null,
+                  reason: null,
+                },
+              ],
+            }),
+            {
+              headers: {
+                "Content-Type": "application/json",
+              },
+            },
+          );
+        }
+
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:participant",
+        });
+
+        return new Response(
+          JSON.stringify({
+            participant_id: "participant-anna",
+            email: "anna.keller@example.test",
+            phone_number: "+41 52 555 01 23",
+            preferred_contact_channel: "email",
+            audit_events: [],
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    screen.getByRole("button", { name: "Teilnehmer" }).click();
+
+    expect(await screen.findByText("Kontaktkanäle")).toBeTruthy();
+    const contactChannels = within(screen.getByLabelText("Kontaktkanäle"));
+    expect(
+      contactChannels.getByText("Aktuelle Telefonnummer: +41 52 555 01 23"),
+    ).toBeTruthy();
+    expect(contactChannels.getByText("Aktueller Kanal: E-Mail")).toBeTruthy();
+
+    fireEvent.change(contactChannels.getByLabelText("Telefonnummer"), {
+      target: { value: "+41 52 555 99 88" },
+    });
+    fireEvent.change(contactChannels.getByLabelText("Bevorzugter Kanal"), {
+      target: { value: "phone" },
+    });
+    contactChannels
+      .getByRole("button", { name: "Kontaktkanäle speichern" })
+      .click();
+
+    expect(
+      await contactChannels.findByText(
+        "Kontaktkanaele konnten nicht gespeichert werden",
+      ),
+    ).toBeTruthy();
+
+    contactChannels
+      .getByRole("button", { name: "Kontaktkanäle speichern" })
+      .click();
+
+    expect(await contactChannels.findByText("Kontaktkanäle gespeichert")).toBeTruthy();
+    expect(
+      contactChannels.getByText("Aktuelle Telefonnummer: +41 52 555 99 88"),
+    ).toBeTruthy();
+    expect(contactChannels.getByText("Aktueller Kanal: Telefon")).toBeTruthy();
   });
 
   it("reicht als Teilnehmer eine regulaere Adressmutation ein und zeigt Status und Wirksamkeitsdatum", async () => {
