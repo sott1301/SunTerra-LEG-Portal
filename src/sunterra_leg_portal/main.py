@@ -1,10 +1,13 @@
+import csv
+import json
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
+from io import StringIO
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from sunterra_leg_portal.auth import (
     CurrentUser,
@@ -60,6 +63,8 @@ class ParticipantRecord(BaseModel):
     display_name: str
     leg_id: str
     email_verified: bool
+    phone_number: str | None = None
+    preferred_contact_channel: str = "email"
 
 
 class InvitationAcceptResponse(BaseModel):
@@ -82,6 +87,13 @@ class ParticipantMembershipRead(BaseModel):
     leg_name: str
     membership_status: str
     billing_notice: str
+
+
+class ParticipantContactChannelsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phone_number: str | None
+    preferred_contact_channel: str
 
 
 class DocumentVersionCreate(BaseModel):
@@ -166,6 +178,14 @@ class AuditEventRead(BaseModel):
     reason: str | None = None
 
 
+class ParticipantContactChannelsRead(BaseModel):
+    participant_id: str
+    email: str
+    phone_number: str | None
+    preferred_contact_channel: str
+    audit_events: list[AuditEventRead] = Field(default_factory=list)
+
+
 class MutationRequestRecord(MutationRequestRead):
     reviewed_at: str | None = None
     review_reason: str | None = None
@@ -191,11 +211,46 @@ class MutationReviewDecision(BaseModel):
     reason: str | None = None
 
 
+class MutationPackageCreate(BaseModel):
+    quarter: str
+
+
+class MutationPackageRecord(BaseModel):
+    mutation_request_id: str
+    participant_id: str
+    mutation_type: str
+    mode: str
+    effective_date: str
+    new_address: AddressRead
+
+
+class MutationPackageStatusEvent(BaseModel):
+    status: str
+    actor_id: str
+    actor_role: str
+    created_at: str
+
+
+class MutationPackageRead(BaseModel):
+    schema_version: str
+    package_id: str
+    leg_id: str
+    quarter: str
+    effective_date: str
+    records: list[MutationPackageRecord]
+    hash: str
+    generated_at: str
+    status_history: list[MutationPackageStatusEvent]
+
+
 INVITATIONS: dict[str, ParticipantInvitationRecord] = {}
 PARTICIPANTS: dict[str, ParticipantRecord] = {}
 DOCUMENT_VERSIONS: dict[str, DocumentVersionRecord] = {}
 CONSENT_EVIDENCE: dict[str, list[ConsentEvidenceRead]] = {}
 MUTATION_REQUESTS: dict[str, list[MutationRequestRecord]] = {}
+PARTICIPANT_AUDIT_EVENTS: dict[str, list[AuditEventRead]] = {}
+MUTATION_PACKAGES: dict[str, MutationPackageRead] = {}
+PACKAGED_MUTATION_REQUEST_IDS: set[str] = set()
 
 
 def _document_hash(document: DocumentVersionCreate) -> str:
@@ -241,6 +296,18 @@ def _participant_membership_read(
         leg_name=BASADINGEN_LEG_NAME,
         membership_status=membership_status,
         billing_notice=PARTICIPANT_BILLING_NOTICE,
+    )
+
+
+def _participant_contact_channels_read(
+    participant: ParticipantRecord,
+) -> ParticipantContactChannelsRead:
+    return ParticipantContactChannelsRead(
+        participant_id=participant.id,
+        email=participant.email,
+        phone_number=participant.phone_number,
+        preferred_contact_channel=participant.preferred_contact_channel,
+        audit_events=PARTICIPANT_AUDIT_EVENTS.get(participant.id, []),
     )
 
 
@@ -306,6 +373,163 @@ def _find_mutation_request(mutation_request_id: str) -> MutationRequestRecord:
                 return mutation_request
 
     raise HTTPException(status_code=404, detail="Mutation request not found")
+
+
+def _find_mutation_package(package_id: str) -> MutationPackageRead:
+    mutation_package = MUTATION_PACKAGES.get(package_id)
+    if mutation_package is None:
+        raise HTTPException(status_code=404, detail="Mutation package not found")
+
+    return mutation_package
+
+
+def _mutation_package_hash(package_data: dict) -> str:
+    canonical = json.dumps(
+        package_data,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _mutation_package_csv(package: MutationPackageRead) -> str:
+    output = StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(
+        [
+            "schema_version",
+            "package_id",
+            "leg_id",
+            "quarter",
+            "effective_date",
+            "hash",
+            "generated_at",
+            "record_index",
+            "mutation_request_id",
+            "participant_id",
+            "mutation_type",
+            "mode",
+            "record_effective_date",
+            "street",
+            "postal_code",
+            "city",
+            "country",
+            "status",
+            "status_actor_id",
+            "status_actor_role",
+            "status_created_at",
+        ],
+    )
+    creation_event = package.status_history[0]
+    for index, record in enumerate(package.records, start=1):
+        writer.writerow(
+            [
+                package.schema_version,
+                package.package_id,
+                package.leg_id,
+                package.quarter,
+                package.effective_date,
+                package.hash,
+                package.generated_at,
+                index,
+                record.mutation_request_id,
+                record.participant_id,
+                record.mutation_type,
+                record.mode,
+                record.effective_date,
+                record.new_address.street,
+                record.new_address.postal_code,
+                record.new_address.city,
+                record.new_address.country,
+                creation_event.status,
+                creation_event.actor_id,
+                creation_event.actor_role,
+                creation_event.created_at,
+            ],
+        )
+
+    return output.getvalue()
+
+
+def _pdf_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _mutation_package_pdf_stream(package: MutationPackageRead) -> str:
+    lines = [
+        "MutationPackage Export",
+        f"schema_version: {package.schema_version}",
+        f"package_id: {package.package_id}",
+        f"leg_id: {package.leg_id}",
+        f"quarter: {package.quarter}",
+        f"effective_date: {package.effective_date}",
+        f"hash: {package.hash}",
+        f"generated_at: {package.generated_at}",
+    ]
+    lines.extend(
+        (
+            f"record {index}: {record.mutation_request_id} {record.participant_id} "
+            f"{record.mutation_type} {record.mode} {record.effective_date} "
+            f"{record.new_address.street}, {record.new_address.postal_code} "
+            f"{record.new_address.city}, {record.new_address.country}"
+        )
+        for index, record in enumerate(package.records, start=1)
+    )
+    creation_event = package.status_history[0]
+    lines.append(
+        (
+            f"status: {creation_event.status} by {creation_event.actor_id} "
+            f"{creation_event.actor_role} at {creation_event.created_at}"
+        ),
+    )
+
+    commands = ["BT", "/F1 10 Tf", "40 800 Td"]
+    for index, line in enumerate(lines):
+        commands.append(f"({_pdf_escape(line)}) Tj")
+        if index != len(lines) - 1:
+            commands.append("0 -14 Td")
+    commands.append("ET")
+
+    return "\n".join(commands)
+
+
+def _mutation_package_pdf(package: MutationPackageRead) -> bytes:
+    stream = _mutation_package_pdf_stream(package).encode("latin-1", "replace")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+        ),
+        b"<< /Length "
+        + str(len(stream)).encode("ascii")
+        + b" >>\nstream\n"
+        + stream
+        + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for object_number, body in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{object_number} 0 obj\n".encode("ascii"))
+        pdf.extend(body)
+        pdf.extend(b"\nendobj\n")
+
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode("ascii"),
+    )
+
+    return bytes(pdf)
 
 
 app = FastAPI(title="SunTerra LEG Portal", version="0.1.0", lifespan=production_lifespan)
@@ -456,6 +680,127 @@ def review_mutation_request(
     return _admin_mutation_request_read(mutation_request)
 
 
+@app.post(
+    "/api/admin/mutation-packages",
+    response_model=MutationPackageRead,
+    status_code=201,
+)
+def create_mutation_package(
+    package: MutationPackageCreate,
+    user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN)),
+) -> MutationPackageRead:
+    _participant_deadline, _quarter_end, effective_date = (
+        _regular_address_quarter_dates(package.quarter)
+    )
+    approved_requests = sorted(
+        [
+            mutation_request
+            for participant_requests in MUTATION_REQUESTS.values()
+            for mutation_request in participant_requests
+            if mutation_request.leg_id == BASADINGEN_LEG_ID
+            and mutation_request.status == "approved"
+            and mutation_request.quarter == package.quarter
+            and mutation_request.id not in PACKAGED_MUTATION_REQUEST_IDS
+        ],
+        key=lambda mutation_request: (
+            mutation_request.reviewed_at or "",
+            mutation_request.id,
+        ),
+    )
+    if not approved_requests:
+        raise HTTPException(
+            status_code=400,
+            detail="No approved un-packaged mutation requests for quarter",
+        )
+
+    generated_at = datetime.now(UTC).isoformat()
+    package_id = uuid4().hex
+    records = [
+        MutationPackageRecord(
+            mutation_request_id=mutation_request.id,
+            participant_id=mutation_request.participant_id,
+            mutation_type=mutation_request.mutation_type,
+            mode=mutation_request.mode,
+            effective_date=mutation_request.effective_date,
+            new_address=mutation_request.new_address,
+        )
+        for mutation_request in approved_requests
+    ]
+    status_history = [
+        MutationPackageStatusEvent(
+            status="created",
+            actor_id=user.id,
+            actor_role=user.role.value,
+            created_at=generated_at,
+        ),
+    ]
+    package_data = {
+        "schema_version": "mutation-package.v1",
+        "package_id": package_id,
+        "leg_id": BASADINGEN_LEG_ID,
+        "quarter": package.quarter,
+        "effective_date": effective_date,
+        "records": [record.model_dump() for record in records],
+        "generated_at": generated_at,
+        "status_history": [event.model_dump() for event in status_history],
+    }
+    mutation_package = MutationPackageRead(
+        **package_data,
+        hash=_mutation_package_hash(package_data),
+    )
+    MUTATION_PACKAGES[package_id] = mutation_package
+    PACKAGED_MUTATION_REQUEST_IDS.update(
+        mutation_request.id for mutation_request in approved_requests
+    )
+
+    return mutation_package
+
+
+@app.get(
+    "/api/admin/mutation-packages/{package_id}/json",
+    response_model=MutationPackageRead,
+)
+def mutation_package_json_artifact(
+    package_id: str,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN)),
+) -> MutationPackageRead:
+    return _find_mutation_package(package_id)
+
+
+@app.get("/api/admin/mutation-packages/{package_id}/csv")
+def mutation_package_csv_artifact(
+    package_id: str,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN)),
+) -> Response:
+    mutation_package = _find_mutation_package(package_id)
+    return Response(
+        content=_mutation_package_csv(mutation_package),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="mutation-package-{package_id}.csv"'
+            ),
+        },
+    )
+
+
+@app.get("/api/admin/mutation-packages/{package_id}/pdf")
+def mutation_package_pdf_artifact(
+    package_id: str,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN)),
+) -> Response:
+    mutation_package = _find_mutation_package(package_id)
+    return Response(
+        content=_mutation_package_pdf(mutation_package),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="mutation-package-{package_id}.pdf"'
+            ),
+        },
+    )
+
+
 @app.get("/api/documents/current", response_model=CurrentDocumentRead)
 def current_document_version(
     document_key: str,
@@ -514,6 +859,41 @@ def participant_consent_history(
     participant = _verified_participant(user)
 
     return CONSENT_EVIDENCE.get(participant.id, [])
+
+
+@app.get(
+    "/api/participants/me/contact-channels",
+    response_model=ParticipantContactChannelsRead,
+)
+def participant_contact_channels(
+    user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
+) -> ParticipantContactChannelsRead:
+    participant = _verified_participant(user)
+
+    return _participant_contact_channels_read(participant)
+
+
+@app.patch(
+    "/api/participants/me/contact-channels",
+    response_model=ParticipantContactChannelsRead,
+)
+def update_participant_contact_channels(
+    contact_channels: ParticipantContactChannelsUpdate,
+    user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
+) -> ParticipantContactChannelsRead:
+    participant = _verified_participant(user)
+    participant.phone_number = contact_channels.phone_number
+    participant.preferred_contact_channel = contact_channels.preferred_contact_channel
+    PARTICIPANT_AUDIT_EVENTS.setdefault(participant.id, []).append(
+        AuditEventRead(
+            id=uuid4().hex,
+            action="participant.contact_channels_updated",
+            actor_role=user.role.value,
+            created_at=datetime.now(UTC).isoformat(),
+        ),
+    )
+
+    return _participant_contact_channels_read(participant)
 
 
 @app.post(

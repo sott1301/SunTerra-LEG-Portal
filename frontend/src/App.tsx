@@ -10,6 +10,8 @@ type HealthStatus = {
 
 type Role = "participant" | "leg_admin" | "partner_admin" | "platform_admin";
 
+type PreferredContactChannel = "email" | "phone";
+
 type CurrentUser = {
   id: string;
   email: string;
@@ -81,6 +83,14 @@ type AuditEvent = {
   reason: string | null;
 };
 
+type ParticipantContactChannels = {
+  participant_id: string;
+  email: string;
+  phone_number: string | null;
+  preferred_contact_channel: PreferredContactChannel;
+  audit_events: AuditEvent[];
+};
+
 type MutationRequest = {
   id: string;
   participant_id: string;
@@ -110,6 +120,35 @@ type AdminMutationRequest = MutationRequest & {
     display_name: string;
     email: string;
   };
+};
+
+type MutationPackage = {
+  schema_version: "mutation-package.v1";
+  package_id: string;
+  leg_id: "basadingen";
+  quarter: string;
+  effective_date: string;
+  records: Array<{
+    mutation_request_id: string;
+    participant_id: string;
+    mutation_type: "address";
+    mode: "regular";
+    effective_date: string;
+    new_address: {
+      street: string;
+      postal_code: string;
+      city: string;
+      country: string;
+    };
+  }>;
+  hash: string;
+  generated_at: string;
+  status_history: Array<{
+    status: "created";
+    actor_id: string;
+    actor_role: Role;
+    created_at: string;
+  }>;
 };
 
 type BackendState =
@@ -169,6 +208,13 @@ export function App() {
   const [consentChecked, setConsentChecked] = useState(false);
   const [consentSaved, setConsentSaved] = useState(false);
   const [consentHistory, setConsentHistory] = useState<ConsentEvidence[]>([]);
+  const [contactChannels, setContactChannels] =
+    useState<ParticipantContactChannels | null>(null);
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [preferredContactChannel, setPreferredContactChannel] =
+    useState<PreferredContactChannel>("email");
+  const [contactChannelSaved, setContactChannelSaved] = useState(false);
+  const [contactChannelError, setContactChannelError] = useState("");
   const [mutationQuarter, setMutationQuarter] = useState("2026-Q3");
   const [addressStreet, setAddressStreet] = useState("");
   const [addressPostalCode, setAddressPostalCode] = useState("");
@@ -185,6 +231,10 @@ export function App() {
     {},
   );
   const [adminMutationError, setAdminMutationError] = useState("");
+  const [packageQuarter, setPackageQuarter] = useState("2026-Q3");
+  const [mutationPackage, setMutationPackage] =
+    useState<MutationPackage | null>(null);
+  const [mutationPackageError, setMutationPackageError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -226,6 +276,7 @@ export function App() {
     setSession({ kind: "authenticated", token, user });
     if (user.role === "participant") {
       void loadCurrentDocument(token);
+      void loadContactChannels(token);
     }
     if (user.role === "leg_admin") {
       void loadAdminMutationRequests(token);
@@ -325,6 +376,21 @@ export function App() {
     }
   }
 
+  async function loadContactChannels(token: string) {
+    const response = await fetch(`${apiBaseUrl}/api/participants/me/contact-channels`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.ok) {
+      const channels = (await response.json()) as ParticipantContactChannels;
+      setContactChannels(channels);
+      setPhoneNumber(channels.phone_number ?? "");
+      setPreferredContactChannel(channels.preferred_contact_channel);
+    }
+  }
+
   async function loadAdminMutationRequests(token: string) {
     const response = await fetch(
       `${apiBaseUrl}/api/admin/mutation-requests?status=submitted`,
@@ -339,6 +405,48 @@ export function App() {
       const records = (await response.json()) as AdminMutationRequest[];
       setAdminMutationRequests(records);
     }
+  }
+
+  function contactChannelLabel(channel: PreferredContactChannel) {
+    return channel === "phone" ? "Telefon" : "E-Mail";
+  }
+
+  async function saveContactChannels(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setContactChannelSaved(false);
+    setContactChannelError("");
+    const response = await fetch(`${apiBaseUrl}/api/participants/me/contact-channels`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        phone_number: phoneNumber.trim() || null,
+        preferred_contact_channel: preferredContactChannel,
+      }),
+    });
+
+    if (response.ok) {
+      const channels = (await response.json()) as ParticipantContactChannels;
+      setContactChannels(channels);
+      setPhoneNumber(channels.phone_number ?? "");
+      setPreferredContactChannel(channels.preferred_contact_channel);
+      setContactChannelSaved(true);
+      return;
+    }
+
+    const error = (await response.json()) as { detail?: unknown };
+    setContactChannelError(
+      typeof error.detail === "string"
+        ? error.detail
+        : "Kontaktkanäle konnten nicht gespeichert werden",
+    );
   }
 
   async function reviewAdminMutationRequest(
@@ -383,6 +491,68 @@ export function App() {
     setAdminMutationError(
       error.detail ?? "Mutation konnte nicht entschieden werden",
     );
+  }
+
+  async function createMutationPackage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setMutationPackageError("");
+    const response = await fetch(`${apiBaseUrl}/api/admin/mutation-packages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        quarter: packageQuarter,
+      }),
+    });
+
+    if (response.ok) {
+      const created = (await response.json()) as MutationPackage;
+      setMutationPackage(created);
+      return;
+    }
+
+    const error = (await response.json()) as { detail?: string };
+    setMutationPackageError(
+      error.detail ?? "Mutationspaket konnte nicht erstellt werden",
+    );
+  }
+
+  async function downloadMutationPackageArtifact(
+    packageId: string,
+    artifact: "json" | "csv" | "pdf",
+  ) {
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    const response = await fetch(
+      `${apiBaseUrl}/api/admin/mutation-packages/${packageId}/${artifact}`,
+      {
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      setMutationPackageError("Export konnte nicht geladen werden");
+      return;
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = `mutation-package-${packageId}.${artifact}`;
+    link.click();
+    URL.revokeObjectURL(objectUrl);
   }
 
   async function submitConsentEvidence(event: FormEvent<HTMLFormElement>) {
@@ -509,6 +679,7 @@ export function App() {
         },
       });
       void loadCurrentDocument(acceptance.access_token);
+      void loadContactChannels(acceptance.access_token);
     }
   }
 
@@ -552,6 +723,61 @@ export function App() {
       ) : null}
     </form>
   ) : null;
+
+  const contactChannelEmail =
+    contactChannels?.email ??
+    (session.kind === "authenticated" ? session.user.email : "");
+  const currentPhoneNumber =
+    contactChannels?.phone_number ?? "Keine Telefonnummer hinterlegt";
+  const currentContactChannel = contactChannels
+    ? contactChannelLabel(contactChannels.preferred_contact_channel)
+    : contactChannelLabel(preferredContactChannel);
+
+  const contactChannelForm = (
+    <section className="contact-channels" aria-label="Kontaktkanäle">
+      <form className="invitation-form contact-channel-form" onSubmit={saveContactChannels}>
+        <h3>Kontaktkanäle</h3>
+        <div className="contact-channel-current">
+          <p>E-Mail: {contactChannelEmail}</p>
+          <p>Aktuelle Telefonnummer: {currentPhoneNumber}</p>
+          <p>Aktueller Kanal: {currentContactChannel}</p>
+        </div>
+        <label>
+          Telefonnummer
+          <input
+            type="tel"
+            value={phoneNumber}
+            onChange={(event) => setPhoneNumber(event.target.value)}
+          />
+        </label>
+        <label>
+          Bevorzugter Kanal
+          <select
+            value={preferredContactChannel}
+            onChange={(event) =>
+              setPreferredContactChannel(
+                event.target.value as PreferredContactChannel,
+              )
+            }
+          >
+            <option value="email">E-Mail</option>
+            <option value="phone">Telefon</option>
+          </select>
+        </label>
+        <button type="submit">Kontaktkanäle speichern</button>
+        {contactChannelSaved ? (
+          <div className="invitation-result" role="status">
+            <p>Kontaktkanäle gespeichert</p>
+          </div>
+        ) : null}
+        {contactChannelError ? (
+          <div className="mutation-error" role="alert">
+            <p>{contactChannelError}</p>
+          </div>
+        ) : null}
+      </form>
+    </section>
+  );
 
   const addressMutationForm = (
     <section className="address-mutations" aria-label="Adressmutation">
@@ -700,6 +926,79 @@ export function App() {
     </section>
   );
 
+  const adminMutationPackages = (
+    <section className="admin-mutation-packages" aria-label="Mutationspakete">
+      <h3>Mutationspakete</h3>
+      <form className="invitation-form mutation-package-form" onSubmit={createMutationPackage}>
+        <label>
+          Paketquartal
+          <select
+            value={packageQuarter}
+            onChange={(event) => setPackageQuarter(event.target.value)}
+          >
+            <option value="2026-Q1">2026-Q1</option>
+            <option value="2026-Q2">2026-Q2</option>
+            <option value="2026-Q3">2026-Q3</option>
+            <option value="2026-Q4">2026-Q4</option>
+          </select>
+        </label>
+        <button type="submit">Paket erstellen</button>
+        {mutationPackageError ? (
+          <div className="mutation-error" role="alert">
+            <p>{mutationPackageError}</p>
+          </div>
+        ) : null}
+      </form>
+      {mutationPackage ? (
+        <div
+          className="mutation-package-result"
+          aria-label="Erstelltes Mutationspaket"
+        >
+          <p>Paket {mutationPackage.package_id}</p>
+          <p>{mutationPackage.quarter}</p>
+          <p>Wirksam ab: {mutationPackage.effective_date}</p>
+          <p>Hash {mutationPackage.hash}</p>
+          <p>Generiert: {mutationPackage.generated_at}</p>
+          <div className="mutation-package-links">
+            <button
+              type="button"
+              onClick={() =>
+                void downloadMutationPackageArtifact(
+                  mutationPackage.package_id,
+                  "json",
+                )
+              }
+            >
+              JSON
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void downloadMutationPackageArtifact(
+                  mutationPackage.package_id,
+                  "csv",
+                )
+              }
+            >
+              CSV
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void downloadMutationPackageArtifact(
+                  mutationPackage.package_id,
+                  "pdf",
+                )
+              }
+            >
+              PDF
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+
   return (
     <main className="portal-shell">
       <section className="hero-band" aria-labelledby="portal-title">
@@ -760,6 +1059,7 @@ export function App() {
               </div>
             ) : null}
             {documentConsentForm}
+            {contactChannelForm}
             {addressMutationForm}
           </div>
         ) : session.kind === "authenticated" && activeWorkspace ? (
@@ -802,6 +1102,7 @@ export function App() {
                   ) : null}
                 </form>
                 {adminMutationInbox}
+                {adminMutationPackages}
               </>
             ) : null}
             {session.user.role === "platform_admin" ? (
@@ -852,6 +1153,7 @@ export function App() {
             {session.user.role === "participant" ? (
               <>
                 {documentConsentForm}
+                {contactChannelForm}
                 {addressMutationForm}
               </>
             ) : null}

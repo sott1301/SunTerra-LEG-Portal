@@ -277,6 +277,26 @@ h1 {
   background: #ffffff;
 }
 
+.contact-channels {
+  display: grid;
+  gap: 14px;
+  max-width: 680px;
+  margin-top: 18px;
+}
+
+.contact-channel-form h3,
+.contact-channel-current p {
+  margin: 0;
+}
+
+.contact-channel-current {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-left: 4px solid #2f6f3e;
+  background: #ffffff;
+}
+
 .address-mutations {
   display: grid;
   gap: 14px;
@@ -319,8 +339,17 @@ h1 {
   margin-top: 22px;
 }
 
+.admin-mutation-packages {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+  margin-top: 22px;
+}
+
 .admin-mutation-inbox h3,
-.admin-mutation-inbox p {
+.admin-mutation-inbox p,
+.admin-mutation-packages h3,
+.admin-mutation-packages p {
   margin: 0;
 }
 
@@ -335,6 +364,33 @@ h1 {
   padding: 12px;
   border-left: 4px solid #2f6f3e;
   background: #ffffff;
+}
+
+.mutation-package-result {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-left: 4px solid #2f6f3e;
+  background: #ffffff;
+}
+
+.mutation-package-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mutation-package-links button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid #2f6f3e;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #2f6f3e;
+  cursor: pointer;
+  text-decoration: none;
 }
 
 .review-actions {
