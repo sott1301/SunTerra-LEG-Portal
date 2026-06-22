@@ -11,11 +11,13 @@ node_modules/
 dist/
 build/
 coverage/
+*.tsbuildinfo
 
 # Local environment
 .env
 .env.*
 !.env.example
+*.db
 
 # Editor / OS
 .DS_Store

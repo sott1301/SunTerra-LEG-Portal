@@ -7,3 +7,47 @@ Dieses Projekt ist bewusst vom grossen SunTerra-LEG Pilotprojekt getrennt. Das a
 Startpunkt:
 
 - `docs/plans/sunterra-leg-member-mutation-portal.md`
+
+## Lokale Entwicklung
+
+### Voraussetzungen
+
+- Python 3.12
+- Node.js 24 oder kompatibel
+- npm 11 oder kompatibel
+
+### Backend einrichten und testen
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e ".[dev]"
+.\.venv\Scripts\python -m pytest
+```
+
+Backend starten:
+
+```powershell
+.\.venv\Scripts\python -m uvicorn sunterra_leg_portal.main:app --reload
+```
+
+Der Health-Endpunkt ist danach unter `http://127.0.0.1:8000/api/health` erreichbar.
+
+### Frontend einrichten und testen
+
+```powershell
+npm install
+npm run test
+npm run build
+```
+
+Frontend starten:
+
+```powershell
+npm run dev
+```
+
+Das Frontend läuft standardmässig unter `http://127.0.0.1:5173` und leitet `/api` im Entwicklungsmodus an das lokale Backend weiter.
+
+### Datenbank-Migrationen
+
+Die Backend-Struktur ist für SQLModel und Alembic vorbereitet. Lokale Migrationen verwenden standardmässig `sqlite:///./sunterra-leg-portal.db`; produktionsnahe Umgebungen setzen `SUNTERRA_DATABASE_URL`.
