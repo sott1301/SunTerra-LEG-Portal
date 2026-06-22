@@ -474,6 +474,8 @@ describe("Portal shell", () => {
     const inbox = within(screen.getByLabelText("Offene Mutationen"));
     const approveRequest = within(inbox.getByText("Anna Keller").closest("div")!);
     const rejectRequest = within(inbox.getByText("Bernd Berger").closest("div")!);
+    expect(approveRequest.getByText("Teilnehmerfrist: 2026-06-30")).toBeTruthy();
+    expect(rejectRequest.getByText("Teilnehmerfrist: 2026-09-30")).toBeTruthy();
 
     approveRequest.getByRole("button", { name: "Genehmigen" }).click();
     fireEvent.change(rejectRequest.getByLabelText("Ablehnungsgrund"), {
@@ -486,6 +488,149 @@ describe("Portal shell", () => {
     expect(
       screen.getByText("Adresse gehoert nicht zum LEG Perimeter."),
     ).toBeTruthy();
+  });
+
+  it("laedt als LEG Admin kontrollierte Datei-Nachweise fuer Mutationen hoch", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-leg-admin",
+            email: "leg-admin@example.test",
+            display_name: "LEG Admin Demo",
+            role: "leg_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/mutation-requests?status=submitted")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "mutation-request-evidence",
+              participant_id: "participant-anna",
+              leg_id: "basadingen",
+              mutation_type: "address",
+              mode: "regular",
+              status: "submitted",
+              quarter: "2026-Q3",
+              quarter_end: "2026-09-30",
+              participant_deadline: "2026-06-30",
+              effective_date: "2026-10-01",
+              submitted_at: "2026-06-15T12:00:00+00:00",
+              reviewed_at: null,
+              review_reason: null,
+              new_address: {
+                street: "Hauptstrasse 7",
+                postal_code: "8254",
+                city: "Basadingen",
+                country: "CH",
+              },
+              participant: {
+                participant_id: "participant-anna",
+                display_name: "Anna Keller",
+                email: "anna.keller@example.test",
+              },
+              audit_events: [],
+            },
+          ]),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (
+        url.endsWith(
+          "/api/admin/mutation-requests/mutation-request-evidence/file-evidence",
+        )
+      ) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          document_type: "mutation_review_supporting_document",
+          purpose: "mutation_review",
+          version: "2026-06-22",
+          filename: "address-proof.txt",
+          content_type: "text/plain",
+          content_base64: window.btoa("Address proof for review"),
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "file-evidence-ui",
+            mutation_request_id: "mutation-request-evidence",
+            participant_id: "participant-anna",
+            document_type: "mutation_review_supporting_document",
+            purpose: "mutation_review",
+            version: "2026-06-22",
+            filename: "address-proof.txt",
+            content_type: "text/plain",
+            sha256_hash: "hash-evidence-ui",
+            access_protection: "mutation_review_owner_and_leg_admin",
+            retention_status: "retained_for_mutation_review",
+            created_at: "2026-06-22T12:00:00+00:00",
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    screen.getByRole("button", { name: "LEG Admin" }).click();
+
+    expect(await screen.findByText("Offene Mutationen")).toBeTruthy();
+    const mutation = within(screen.getByText("Anna Keller").closest("div")!);
+    fireEvent.change(mutation.getByLabelText("Nachweisversion"), {
+      target: { value: "2026-06-22" },
+    });
+    fireEvent.change(mutation.getByLabelText("Dateiname"), {
+      target: { value: "address-proof.txt" },
+    });
+    fireEvent.change(mutation.getByLabelText("MIME-Typ"), {
+      target: { value: "text/plain" },
+    });
+    fireEvent.change(mutation.getByLabelText("Dateiinhalt"), {
+      target: { value: "Address proof for review" },
+    });
+    mutation.getByRole("button", { name: "Nachweis hochladen" }).click();
+
+    expect(await mutation.findByText("address-proof.txt")).toBeTruthy();
+    expect(mutation.getByText("Version 2026-06-22")).toBeTruthy();
+    expect(mutation.getByText("Hash hash-evidence-ui")).toBeTruthy();
+    expect(mutation.getByText("mutation_review_owner_and_leg_admin")).toBeTruthy();
+    expect(mutation.getByText("retained_for_mutation_review")).toBeTruthy();
   });
 
   it("erstellt als LEG Admin ein Mutationspaket und zeigt Exportlinks", async () => {
@@ -1478,7 +1623,7 @@ describe("Portal shell", () => {
     expect(contactChannels.getByText("Aktueller Kanal: Telefon")).toBeTruthy();
   });
 
-  it("reicht als Teilnehmer eine regulaere Adressmutation ein und zeigt Status und Wirksamkeitsdatum", async () => {
+  it("reicht als Teilnehmer eine regulaere Adressmutation ein und zeigt Status, Frist und Wirksamkeitsdatum", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
 
@@ -1595,6 +1740,7 @@ describe("Portal shell", () => {
     const mutations = within(screen.getByLabelText("Meine Mutationen"));
     expect(mutations.getByText("2026-Q3")).toBeTruthy();
     expect(mutations.getByText("Status: submitted")).toBeTruthy();
+    expect(mutations.getByText("Teilnehmerfrist: 2026-06-30")).toBeTruthy();
     expect(mutations.getByText("Wirksam ab: 2026-10-01")).toBeTruthy();
   });
 

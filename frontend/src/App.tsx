@@ -122,6 +122,28 @@ type AdminMutationRequest = MutationRequest & {
   };
 };
 
+type FileEvidence = {
+  id: string;
+  mutation_request_id: string;
+  participant_id: string;
+  document_type: "mutation_review_supporting_document";
+  purpose: "mutation_review";
+  version: string;
+  filename: string;
+  content_type: string;
+  sha256_hash: string;
+  access_protection: string;
+  retention_status: string;
+  created_at: string;
+};
+
+type FileEvidenceDraft = {
+  version: string;
+  filename: string;
+  contentType: string;
+  content: string;
+};
+
 type MutationPackage = {
   schema_version: "mutation-package.v1";
   package_id: string;
@@ -185,6 +207,19 @@ const demoRoles: Array<{ role: Role; label: string; workspaceTitle: string }> = 
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 const devTokenStorageKey = "sunterra.devToken";
+const emptyFileEvidenceDraft: FileEvidenceDraft = {
+  version: "",
+  filename: "",
+  contentType: "text/plain",
+  content: "",
+};
+
+function textToBase64(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+
+  return window.btoa(binary);
+}
 
 export function App() {
   const [backend, setBackend] = useState<BackendState>({ kind: "checking" });
@@ -231,6 +266,12 @@ export function App() {
     {},
   );
   const [adminMutationError, setAdminMutationError] = useState("");
+  const [fileEvidenceDrafts, setFileEvidenceDrafts] = useState<
+    Record<string, FileEvidenceDraft>
+  >({});
+  const [fileEvidenceByMutationId, setFileEvidenceByMutationId] = useState<
+    Record<string, FileEvidence[]>
+  >({});
   const [packageQuarter, setPackageQuarter] = useState("2026-Q3");
   const [mutationPackage, setMutationPackage] =
     useState<MutationPackage | null>(null);
@@ -490,6 +531,77 @@ export function App() {
     const error = (await response.json()) as { detail?: string };
     setAdminMutationError(
       error.detail ?? "Mutation konnte nicht entschieden werden",
+    );
+  }
+
+  function updateFileEvidenceDraft(
+    mutationRequestId: string,
+    changes: Partial<FileEvidenceDraft>,
+  ) {
+    setFileEvidenceDrafts((current) => ({
+      ...current,
+      [mutationRequestId]: {
+        ...emptyFileEvidenceDraft,
+        ...(current[mutationRequestId] ?? {}),
+        ...changes,
+      },
+    }));
+  }
+
+  async function attachMutationFileEvidence(
+    event: FormEvent<HTMLFormElement>,
+    mutationRequestId: string,
+  ) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    const draft = fileEvidenceDrafts[mutationRequestId] ?? emptyFileEvidenceDraft;
+    setAdminMutationError("");
+    const response = await fetch(
+      `${apiBaseUrl}/api/admin/mutation-requests/${mutationRequestId}/file-evidence`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          document_type: "mutation_review_supporting_document",
+          purpose: "mutation_review",
+          version: draft.version,
+          filename: draft.filename,
+          content_type: draft.contentType,
+          content_base64: textToBase64(draft.content),
+        }),
+      },
+    );
+
+    if (response.ok) {
+      const evidence = (await response.json()) as FileEvidence;
+      setFileEvidenceByMutationId((current) => ({
+        ...current,
+        [mutationRequestId]: [
+          ...(current[mutationRequestId] ?? []),
+          evidence,
+        ],
+      }));
+      setFileEvidenceDrafts((current) => ({
+        ...current,
+        [mutationRequestId]: {
+          ...emptyFileEvidenceDraft,
+          version: draft.version,
+          contentType: draft.contentType,
+        },
+      }));
+      return;
+    }
+
+    const error = (await response.json()) as { detail?: string };
+    setAdminMutationError(
+      error.detail ?? "Datei-Nachweis konnte nicht gespeichert werden",
     );
   }
 
@@ -845,6 +957,7 @@ export function App() {
             <div key={mutationRequest.id}>
               <p>{mutationRequest.quarter}</p>
               <p>Status: {mutationRequest.status}</p>
+              <p>Teilnehmerfrist: {mutationRequest.participant_deadline}</p>
               <p>Wirksam ab: {mutationRequest.effective_date}</p>
             </div>
           ))}
@@ -869,6 +982,7 @@ export function App() {
                 {mutationRequest.new_address.city}
               </p>
               <p>Status: {mutationRequest.status}</p>
+              <p>Teilnehmerfrist: {mutationRequest.participant_deadline}</p>
               {mutationRequest.review_reason ? (
                 <p>{mutationRequest.review_reason}</p>
               ) : null}
@@ -912,6 +1026,88 @@ export function App() {
                   Ablehnen
                 </button>
               </div>
+              <section className="file-evidence" aria-label="Datei-Nachweise">
+                <h4>Datei-Nachweise</h4>
+                <form
+                  className="file-evidence-form"
+                  onSubmit={(event) =>
+                    void attachMutationFileEvidence(event, mutationRequest.id)
+                  }
+                >
+                  <label>
+                    Nachweisversion
+                    <input
+                      type="text"
+                      value={
+                        fileEvidenceDrafts[mutationRequest.id]?.version ?? ""
+                      }
+                      onChange={(event) =>
+                        updateFileEvidenceDraft(mutationRequest.id, {
+                          version: event.target.value,
+                        })
+                      }
+                      required
+                    />
+                  </label>
+                  <label>
+                    Dateiname
+                    <input
+                      type="text"
+                      value={
+                        fileEvidenceDrafts[mutationRequest.id]?.filename ?? ""
+                      }
+                      onChange={(event) =>
+                        updateFileEvidenceDraft(mutationRequest.id, {
+                          filename: event.target.value,
+                        })
+                      }
+                      required
+                    />
+                  </label>
+                  <label>
+                    MIME-Typ
+                    <input
+                      type="text"
+                      value={
+                        fileEvidenceDrafts[mutationRequest.id]?.contentType ??
+                        "text/plain"
+                      }
+                      onChange={(event) =>
+                        updateFileEvidenceDraft(mutationRequest.id, {
+                          contentType: event.target.value,
+                        })
+                      }
+                      required
+                    />
+                  </label>
+                  <label>
+                    Dateiinhalt
+                    <textarea
+                      value={
+                        fileEvidenceDrafts[mutationRequest.id]?.content ?? ""
+                      }
+                      onChange={(event) =>
+                        updateFileEvidenceDraft(mutationRequest.id, {
+                          content: event.target.value,
+                        })
+                      }
+                      required
+                    />
+                  </label>
+                  <button type="submit">Nachweis hochladen</button>
+                </form>
+                {(fileEvidenceByMutationId[mutationRequest.id] ?? []).map(
+                  (evidence) => (
+                    <div className="file-evidence-result" key={evidence.id}>
+                      <p>{evidence.filename}</p>
+                      <p>Version {evidence.version}</p>
+                      <p>Hash {evidence.sha256_hash}</p>
+                      <p>{evidence.access_protection}</p>
+                      <p>{evidence.retention_status}</p>
+                    </div>
+                  ),
+                )}
+              </section>
             </div>
           ))}
         </div>

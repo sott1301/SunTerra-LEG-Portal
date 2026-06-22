@@ -418,6 +418,54 @@ h1 {
   color: #1f2937;
 }
 
+.file-evidence {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #d8e0d1;
+}
+
+.file-evidence h4,
+.file-evidence p {
+  margin: 0;
+}
+
+.file-evidence-form {
+  display: grid;
+  gap: 10px;
+}
+
+.file-evidence-form label {
+  display: grid;
+  gap: 6px;
+  color: #344054;
+  font-weight: 700;
+}
+
+.file-evidence-form input,
+.file-evidence-form textarea {
+  min-height: 40px;
+  box-sizing: border-box;
+  border: 1px solid #bdc9b4;
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.file-evidence-form textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.file-evidence-result {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-left: 4px solid #2f6f3e;
+  background: #f7faf5;
+}
+
 .review-actions button {
   min-height: 40px;
   padding: 0 14px;
