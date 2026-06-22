@@ -769,6 +769,166 @@ describe("Portal shell", () => {
     expect(createdPackage.getByRole("button", { name: "PDF" })).toBeTruthy();
   });
 
+  it("zeigt Gemeinde/EW Mutationspakete und aktualisiert Paketstatus", async () => {
+    const packageSummary = {
+      package_id: "package-partner-1",
+      leg_id: "basadingen",
+      quarter: "2026-Q3",
+      effective_date: "2026-10-01",
+      generated_at: "2026-06-22T12:00:00+00:00",
+      record_count: 1,
+      current_status: "created",
+      status_updated_at: "2026-06-22T12:00:00+00:00",
+    };
+    const packageDetail = (status: "created" | "question") => ({
+      ...packageSummary,
+      current_status: status,
+      status_updated_at:
+        status === "question"
+          ? "2026-06-23T08:30:00+00:00"
+          : packageSummary.status_updated_at,
+      records: [
+        {
+          mutation_request_id: "mutation-partner-1",
+          participant_id: "participant-anna",
+          mutation_type: "address",
+          mode: "regular",
+          effective_date: "2026-10-01",
+          new_address: {
+            street: "Detailweg 8",
+            postal_code: "8254",
+            city: "Basadingen",
+            country: "CH",
+          },
+        },
+      ],
+      status_history:
+        status === "question"
+          ? [
+              {
+                status: "created",
+                actor_role: "leg_admin",
+                created_at: "2026-06-22T12:00:00+00:00",
+                reference: null,
+                reason: null,
+              },
+              {
+                status: "question",
+                actor_role: "partner_admin",
+                created_at: "2026-06-23T08:30:00+00:00",
+                reference: "EW-RF-404",
+                reason: null,
+              },
+            ]
+          : [
+              {
+                status: "created",
+                actor_role: "leg_admin",
+                created_at: "2026-06-22T12:00:00+00:00",
+                reference: null,
+                reason: null,
+              },
+            ],
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-partner-admin",
+            email: "partner-admin@example.test",
+            display_name: "Partner Admin Demo",
+            role: "partner_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/partner/mutation-packages")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:partner_admin",
+        });
+
+        return new Response(JSON.stringify([packageSummary]), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/partner/mutation-packages/package-partner-1/status")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:partner_admin",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          status: "question",
+          reference: "EW-RF-404",
+        });
+
+        return new Response(JSON.stringify(packageDetail("question")), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/partner/mutation-packages/package-partner-1")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:partner_admin",
+        });
+
+        return new Response(JSON.stringify(packageDetail("created")), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    screen.getByRole("button", { name: "Gemeinde/EW" }).click();
+
+    expect(await screen.findByText("Mutationspaket-Eingang")).toBeTruthy();
+    const inbox = within(screen.getByLabelText("Mutationspaket-Eingang"));
+    expect(inbox.getByText("Paket package-partner-1")).toBeTruthy();
+    expect(inbox.getByText("Status: created")).toBeTruthy();
+
+    inbox.getByRole("button", { name: "Details anzeigen" }).click();
+
+    expect(await inbox.findByText("Detailweg 8, 8254 Basadingen, CH")).toBeTruthy();
+    fireEvent.change(inbox.getByLabelText("Paketstatus"), {
+      target: { value: "question" },
+    });
+    fireEvent.change(inbox.getByLabelText("Referenz oder Grund"), {
+      target: { value: "EW-RF-404" },
+    });
+    inbox.getByRole("button", { name: "Status aktualisieren" }).click();
+
+    expect((await inbox.findAllByText("Status: question")).length).toBeGreaterThan(0);
+    expect(inbox.getByText("EW-RF-404")).toBeTruthy();
+  });
+
   it("veroeffentlicht als Plattform-Admin eine Dokumentversion", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -1742,6 +1902,146 @@ describe("Portal shell", () => {
     expect(mutations.getByText("Status: submitted")).toBeTruthy();
     expect(mutations.getByText("Teilnehmerfrist: 2026-06-30")).toBeTruthy();
     expect(mutations.getByText("Wirksam ab: 2026-10-01")).toBeTruthy();
+  });
+
+  it("zeigt beim Self-Service den Identitätscheckpoint und schaltet Mitgliedschaft erst nach Verifizierung frei", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/auth/self-service-onboarding-requests")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          email: "selina.frei@example.test",
+          display_name: "Selina Frei",
+        });
+
+        return new Response(
+          JSON.stringify({
+            access_token: "self-service-access",
+            token_type: "bearer",
+            participant_id: "participant-selina",
+            participant_status: "pending_email_verification",
+            identity_checkpoint: {
+              required_level: "email_verified",
+              current_level: "unverified",
+              satisfied: false,
+            },
+            dev_email_verification_token: "dev-self-service-token",
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (
+        url.endsWith(
+          "/api/auth/email-verifications/dev-self-service-token/verify",
+        )
+      ) {
+        return new Response(
+          JSON.stringify({
+            participant_id: "participant-selina",
+            email_verified: true,
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (
+        url.endsWith(
+          "/api/participants/me/identity-checkpoint?action=membership_activation",
+        )
+      ) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer self-service-access",
+        });
+
+        return new Response(
+          JSON.stringify({
+            action: "membership_activation",
+            required_level: "email_verified",
+            current_level: "email_verified",
+            satisfied: true,
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/participants/me/membership")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer self-service-access",
+        });
+
+        return new Response(
+          JSON.stringify({
+            participant_id: "participant-selina",
+            display_name: "Selina Frei",
+            email: "selina.frei@example.test",
+            leg_id: "basadingen",
+            leg_name: "SunTerra LEG Basadingen",
+            membership_status: "active",
+            billing_notice: "Abrechnung und Inkasso bleiben bei Gemeinde/EW.",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Self-Service E-Mail"), {
+      target: { value: "selina.frei@example.test" },
+    });
+    fireEvent.change(screen.getByLabelText("Self-Service Anzeigename"), {
+      target: { value: "Selina Frei" },
+    });
+    screen.getByRole("button", { name: "Self-Service starten" }).click();
+
+    expect(await screen.findByText("Identitätsprüfung")).toBeTruthy();
+    expect(screen.getByText("Erforderlich: email_verified")).toBeTruthy();
+    expect(screen.getByText("Aktuell: unverified")).toBeTruthy();
+    expect(screen.getByText("Checkpoint offen")).toBeTruthy();
+    expect(screen.getByText("dev-self-service-token")).toBeTruthy();
+    expect(screen.queryByText("Mein Mitgliederbereich")).toBeNull();
+
+    screen.getByRole("button", { name: "Dev E-Mail verifizieren" }).click();
+
+    expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+    expect(screen.getByText("Selina Frei")).toBeTruthy();
+    expect(screen.getByText("selina.frei@example.test")).toBeTruthy();
   });
 
   it("zeigt einen verständlichen Status, wenn das Backend nicht erreichbar ist", async () => {

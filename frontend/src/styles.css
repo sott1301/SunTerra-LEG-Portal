@@ -198,6 +198,38 @@ h1 {
   background: #ffffff;
 }
 
+.identity-checkpoint {
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+  margin-top: 18px;
+  padding: 12px;
+  border-left: 4px solid #2f6f3e;
+  background: #ffffff;
+}
+
+.identity-checkpoint h3,
+.identity-checkpoint p {
+  margin: 0;
+}
+
+.identity-checkpoint button {
+  justify-self: start;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #2f6f3e;
+  border-radius: 6px;
+  background: #2f6f3e;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.identity-checkpoint button:disabled {
+  border-color: #9ca3af;
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
 .membership-workspace {
   display: grid;
   gap: 14px;
@@ -391,6 +423,82 @@ h1 {
   color: #2f6f3e;
   cursor: pointer;
   text-decoration: none;
+}
+
+.partner-package-inbox {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+  margin-top: 22px;
+}
+
+.partner-package-inbox h3,
+.partner-package-inbox p {
+  margin: 0;
+}
+
+.partner-package-list {
+  display: grid;
+  gap: 12px;
+}
+
+.partner-package-item,
+.partner-package-detail {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-left: 4px solid #2f6f3e;
+  background: #ffffff;
+}
+
+.partner-package-detail {
+  margin-top: 4px;
+  background: #f7faf5;
+}
+
+.partner-status-history {
+  display: grid;
+  gap: 8px;
+}
+
+.partner-status-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  padding-top: 8px;
+  border-top: 1px solid #d8e0d1;
+}
+
+.partner-status-form label {
+  display: grid;
+  gap: 6px;
+  min-width: min(100%, 220px);
+  color: #344054;
+  font-weight: 700;
+}
+
+.partner-status-form input,
+.partner-status-form select {
+  min-height: 40px;
+  box-sizing: border-box;
+  border: 1px solid #bdc9b4;
+  border-radius: 6px;
+  padding: 0 12px;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.partner-package-item > button,
+.partner-status-form button {
+  justify-self: start;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #2f6f3e;
+  border-radius: 6px;
+  background: #2f6f3e;
+  color: #ffffff;
+  cursor: pointer;
 }
 
 .review-actions {
