@@ -45,6 +45,21 @@ DEV_USERS: dict[Role, CurrentUser] = {
         role=Role.PLATFORM_ADMIN,
     ),
 }
+DEV_PARTICIPANT_USERS: dict[str, CurrentUser] = {}
+
+
+def register_dev_participant_user(
+    *,
+    participant_id: str,
+    email: str,
+    display_name: str,
+) -> None:
+    DEV_PARTICIPANT_USERS[participant_id] = CurrentUser(
+        id=participant_id,
+        email=email,
+        display_name=display_name,
+        role=Role.PARTICIPANT,
+    )
 
 
 def current_user(authorization: str | None = Header(default=None)) -> CurrentUser:
@@ -55,6 +70,17 @@ def current_user(authorization: str | None = Header(default=None)) -> CurrentUse
         )
 
     role_name = authorization.removeprefix("Bearer dev:")
+    participant_prefix = f"{Role.PARTICIPANT.value}:"
+    if role_name.startswith(participant_prefix):
+        participant_id = role_name.removeprefix(participant_prefix)
+        user = DEV_PARTICIPANT_USERS.get(participant_id)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unknown development user",
+            )
+
+        return user
 
     try:
         role = Role(role_name)
