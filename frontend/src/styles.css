@@ -167,6 +167,17 @@ h1 {
   color: #1f2937;
 }
 
+.invitation-form textarea {
+  min-height: 120px;
+  box-sizing: border-box;
+  border: 1px solid #bdc9b4;
+  border-radius: 6px;
+  padding: 10px 12px;
+  resize: vertical;
+  background: #ffffff;
+  color: #1f2937;
+}
+
 .invitation-form button {
   justify-self: start;
   min-height: 40px;
@@ -215,6 +226,51 @@ h1 {
 }
 
 .billing-notice {
+  padding: 12px;
+  border-left: 4px solid #2f6f3e;
+  background: #ffffff;
+}
+
+.document-consent {
+  display: grid;
+  gap: 12px;
+  max-width: 680px;
+  margin-top: 18px;
+}
+
+.document-consent h3,
+.document-consent p {
+  margin: 0;
+}
+
+.document-consent label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #344054;
+  font-weight: 700;
+}
+
+.document-consent button {
+  justify-self: start;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #2f6f3e;
+  border-radius: 6px;
+  background: #2f6f3e;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.document-consent button:disabled {
+  border-color: #9ca3af;
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+.consent-history {
+  display: grid;
+  gap: 10px;
   padding: 12px;
   border-left: 4px solid #2f6f3e;
   background: #ffffff;
