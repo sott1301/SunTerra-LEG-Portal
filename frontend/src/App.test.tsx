@@ -929,6 +929,132 @@ describe("Portal shell", () => {
     expect(inbox.getByText("EW-RF-404")).toBeTruthy();
   });
 
+  it("zeigt Gemeinde/EW das Mitgliederregister ohne private Felder", async () => {
+    const memberRegister = {
+      leg_id: "basadingen",
+      leg_name: "SunTerra LEG Basadingen",
+      members: [
+        {
+          participant_id: "participant-rita",
+          display_name: "Rita Register",
+          membership_status: "active",
+          reporting_address: {
+            street: "Registerweg 4",
+            postal_code: "8254",
+            city: "Basadingen",
+            country: "CH",
+          },
+          latest_package_status: {
+            package_id: "package-register-1",
+            quarter: "2031-Q2",
+            effective_date: "2031-07-01",
+            status: "processed",
+          },
+          email: "rita.private@example.test",
+          phone_number: "+41 52 555 77 66",
+          preferred_contact_channel: "phone",
+          consent_evidence: [{ document_hash: "secret-consent-hash" }],
+          audit_events: [{ actor_id: "dev-partner-admin" }],
+          review_reason: "secret review reason",
+          file_evidence: [
+            {
+              filename: "secret-proof.txt",
+              content_base64: "c2VjcmV0LWZpbGUtZXZpZGVuY2U=",
+            },
+          ],
+          hash: "secret-package-hash",
+          artifact_urls: {
+            json: "https://private-artifact.example.test/package.json",
+          },
+          actor_id: "dev-leg-admin",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-partner-admin",
+            email: "partner-admin@example.test",
+            display_name: "Partner Admin Demo",
+            role: "partner_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/partner/mutation-packages")) {
+        return new Response(JSON.stringify([]), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/partner/member-register")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:partner_admin",
+        });
+
+        return new Response(JSON.stringify(memberRegister), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    screen.getByRole("button", { name: "Gemeinde/EW" }).click();
+
+    expect(await screen.findByText("Mitgliederregister")).toBeTruthy();
+    const register = within(screen.getByLabelText("Mitgliederregister"));
+    expect(register.getByText("SunTerra LEG Basadingen")).toBeTruthy();
+    expect(register.getByText("Rita Register")).toBeTruthy();
+    expect(register.getByText("Registerweg 4, 8254 Basadingen, CH")).toBeTruthy();
+    expect(register.getByText("Status: active")).toBeTruthy();
+    expect(register.getByText("Paket package-register-1")).toBeTruthy();
+    expect(register.getByText("2031-Q2")).toBeTruthy();
+    expect(register.getByText("Paketstatus: processed")).toBeTruthy();
+
+    const renderedText = document.body.textContent ?? "";
+    for (const prohibitedText of [
+      "rita.private@example.test",
+      "+41 52 555 77 66",
+      "phone",
+      "secret-consent-hash",
+      "dev-partner-admin",
+      "secret review reason",
+      "secret-proof.txt",
+      "c2VjcmV0LWZpbGUtZXZpZGVuY2U=",
+      "secret-package-hash",
+      "https://private-artifact.example.test/package.json",
+      "dev-leg-admin",
+    ]) {
+      expect(renderedText).not.toContain(prohibitedText);
+    }
+  });
+
   it("veroeffentlicht als Plattform-Admin eine Dokumentversion", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();

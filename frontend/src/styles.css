@@ -432,18 +432,29 @@ h1 {
   margin-top: 22px;
 }
 
+.partner-member-register {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+  margin-top: 22px;
+}
+
 .partner-package-inbox h3,
-.partner-package-inbox p {
+.partner-package-inbox p,
+.partner-member-register h3,
+.partner-member-register p {
   margin: 0;
 }
 
-.partner-package-list {
+.partner-package-list,
+.partner-member-list {
   display: grid;
   gap: 12px;
 }
 
 .partner-package-item,
-.partner-package-detail {
+.partner-package-detail,
+.partner-member-item {
   display: grid;
   gap: 8px;
   padding: 12px;

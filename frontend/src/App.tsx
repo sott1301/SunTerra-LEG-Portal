@@ -228,6 +228,28 @@ type PartnerMutationPackageStatusRead = {
   status_history: PartnerMutationPackageStatusEvent[];
 };
 
+type PartnerMemberRegister = {
+  leg_id: "basadingen";
+  leg_name: string;
+  members: Array<{
+    participant_id: string;
+    display_name: string;
+    membership_status: string;
+    reporting_address: {
+      street: string;
+      postal_code: string;
+      city: string;
+      country: string;
+    };
+    latest_package_status: {
+      package_id: string;
+      quarter: string;
+      effective_date: string;
+      status: PartnerPackageStatus;
+    };
+  }>;
+};
+
 type PartnerStatusDraft = {
   status: PartnerPackageStatusUpdate;
   reference: string;
@@ -352,6 +374,10 @@ export function App() {
     Record<string, PartnerStatusDraft>
   >({});
   const [partnerPackageError, setPartnerPackageError] = useState("");
+  const [partnerMemberRegister, setPartnerMemberRegister] =
+    useState<PartnerMemberRegister | null>(null);
+  const [partnerMemberRegisterError, setPartnerMemberRegisterError] =
+    useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -402,9 +428,11 @@ export function App() {
     }
     if (user.role === "partner_admin") {
       void loadPartnerMutationPackages(token);
+      void loadPartnerMemberRegister(token);
     } else {
       setPartnerPackages([]);
       setPartnerPackageDetails({});
+      setPartnerMemberRegister(null);
     }
   }
 
@@ -634,6 +662,29 @@ export function App() {
       const packages = (await response.json()) as PartnerMutationPackageSummary[];
       setPartnerPackages(packages);
     }
+  }
+
+  async function loadPartnerMemberRegister(token: string) {
+    setPartnerMemberRegisterError("");
+    const response = await fetch(`${apiBaseUrl}/api/partner/member-register`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.ok) {
+      const register = (await response.json()) as Partial<PartnerMemberRegister>;
+      if (
+        register.leg_id === "basadingen" &&
+        typeof register.leg_name === "string" &&
+        Array.isArray(register.members)
+      ) {
+        setPartnerMemberRegister(register as PartnerMemberRegister);
+      }
+      return;
+    }
+
+    setPartnerMemberRegisterError("Mitgliederregister konnte nicht geladen werden");
   }
 
   function contactChannelLabel(channel: PreferredContactChannel) {
@@ -1614,6 +1665,46 @@ export function App() {
     </section>
   );
 
+  const partnerMemberRegisterView = (
+    <section className="partner-member-register" aria-label="Mitgliederregister">
+      <h3>Mitgliederregister</h3>
+      {partnerMemberRegister ? (
+        <>
+          <p>{partnerMemberRegister.leg_name}</p>
+          {partnerMemberRegister.members.length > 0 ? (
+            <div className="partner-member-list">
+              {partnerMemberRegister.members.map((member) => (
+                <div className="partner-member-item" key={member.participant_id}>
+                  <p>{member.display_name}</p>
+                  <p>Status: {member.membership_status}</p>
+                  <p>
+                    {member.reporting_address.street},{" "}
+                    {member.reporting_address.postal_code}{" "}
+                    {member.reporting_address.city},{" "}
+                    {member.reporting_address.country}
+                  </p>
+                  <p>Paket {member.latest_package_status.package_id}</p>
+                  <p>{member.latest_package_status.quarter}</p>
+                  <p>Wirksam ab: {member.latest_package_status.effective_date}</p>
+                  <p>Paketstatus: {member.latest_package_status.status}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p>Keine Mitglieder</p>
+          )}
+        </>
+      ) : (
+        <p>Mitgliederregister wird geladen</p>
+      )}
+      {partnerMemberRegisterError ? (
+        <div className="mutation-error" role="alert">
+          <p>{partnerMemberRegisterError}</p>
+        </div>
+      ) : null}
+    </section>
+  );
+
   return (
     <main className="portal-shell">
       <section className="hero-band" aria-labelledby="portal-title">
@@ -1720,7 +1811,12 @@ export function App() {
                 {adminMutationPackages}
               </>
             ) : null}
-            {session.user.role === "partner_admin" ? partnerPackageInbox : null}
+            {session.user.role === "partner_admin" ? (
+              <>
+                {partnerMemberRegisterView}
+                {partnerPackageInbox}
+              </>
+            ) : null}
             {session.user.role === "platform_admin" ? (
               <form
                 className="invitation-form document-version-form"
