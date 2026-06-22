@@ -39,6 +39,21 @@ type EmailVerificationResponse = {
   email_verified: boolean;
 };
 
+type IdentityCheckpoint = {
+  required_level: "email_verified";
+  current_level: "unverified" | "email_verified";
+  satisfied: boolean;
+};
+
+type SelfServiceOnboardingResponse = {
+  access_token: string;
+  token_type: "bearer";
+  participant_id: string;
+  participant_status: "pending_email_verification";
+  identity_checkpoint: IdentityCheckpoint;
+  dev_email_verification_token: string;
+};
+
 type ParticipantMembership = {
   participant_id: string;
   display_name: string;
@@ -173,6 +188,51 @@ type MutationPackage = {
   }>;
 };
 
+type PartnerPackageStatus =
+  | "created"
+  | "received"
+  | "in_review"
+  | "processed"
+  | "question"
+  | "technically_not_possible";
+
+type PartnerPackageStatusUpdate = Exclude<PartnerPackageStatus, "created">;
+
+type PartnerMutationPackageSummary = {
+  package_id: string;
+  leg_id: "basadingen";
+  quarter: string;
+  effective_date: string;
+  generated_at: string;
+  record_count: number;
+  current_status: PartnerPackageStatus;
+  status_updated_at: string;
+};
+
+type PartnerMutationPackageStatusEvent = {
+  status: PartnerPackageStatus;
+  actor_role: Role;
+  created_at: string;
+  reference: string | null;
+  reason: string | null;
+};
+
+type PartnerMutationPackageDetail = PartnerMutationPackageSummary & {
+  records: MutationPackage["records"];
+  status_history: PartnerMutationPackageStatusEvent[];
+};
+
+type PartnerMutationPackageStatusRead = {
+  package_id: string;
+  current_status: PartnerPackageStatus;
+  status_history: PartnerMutationPackageStatusEvent[];
+};
+
+type PartnerStatusDraft = {
+  status: PartnerPackageStatusUpdate;
+  reference: string;
+};
+
 type BackendState =
   | { kind: "checking" }
   | { kind: "connected"; health: HealthStatus }
@@ -229,6 +289,12 @@ export function App() {
   const [participantInvitation, setParticipantInvitation] =
     useState<ParticipantInvitation | null>(null);
   const [onboardingToken, setOnboardingToken] = useState("");
+  const [selfServiceEmail, setSelfServiceEmail] = useState("");
+  const [selfServiceDisplayName, setSelfServiceDisplayName] = useState("");
+  const [selfServiceOnboarding, setSelfServiceOnboarding] =
+    useState<SelfServiceOnboardingResponse | null>(null);
+  const [identityCheckpoint, setIdentityCheckpoint] =
+    useState<IdentityCheckpoint | null>(null);
   const [emailVerification, setEmailVerification] =
     useState<EmailVerificationResponse | null>(null);
   const [participantMembership, setParticipantMembership] =
@@ -276,6 +342,16 @@ export function App() {
   const [mutationPackage, setMutationPackage] =
     useState<MutationPackage | null>(null);
   const [mutationPackageError, setMutationPackageError] = useState("");
+  const [partnerPackages, setPartnerPackages] = useState<
+    PartnerMutationPackageSummary[]
+  >([]);
+  const [partnerPackageDetails, setPartnerPackageDetails] = useState<
+    Record<string, PartnerMutationPackageDetail>
+  >({});
+  const [partnerStatusDrafts, setPartnerStatusDrafts] = useState<
+    Record<string, PartnerStatusDraft>
+  >({});
+  const [partnerPackageError, setPartnerPackageError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -324,6 +400,12 @@ export function App() {
     } else {
       setAdminMutationRequests([]);
     }
+    if (user.role === "partner_admin") {
+      void loadPartnerMutationPackages(token);
+    } else {
+      setPartnerPackages([]);
+      setPartnerPackageDetails({});
+    }
   }
 
   function loginAs(role: Role) {
@@ -357,6 +439,99 @@ export function App() {
     if (response.ok) {
       const invitation = (await response.json()) as ParticipantInvitation;
       setParticipantInvitation(invitation);
+    }
+  }
+
+  async function startSelfServiceOnboarding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const response = await fetch(
+      `${apiBaseUrl}/api/auth/self-service-onboarding-requests`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: selfServiceEmail,
+          display_name: selfServiceDisplayName,
+        }),
+      },
+    );
+
+    if (response.ok) {
+      const onboarding =
+        (await response.json()) as SelfServiceOnboardingResponse;
+      setSelfServiceOnboarding(onboarding);
+      setIdentityCheckpoint(onboarding.identity_checkpoint);
+    }
+  }
+
+  async function verifySelfServiceEmail() {
+    if (selfServiceOnboarding === null) {
+      return;
+    }
+
+    const verifyResponse = await fetch(
+      (
+        `${apiBaseUrl}/api/auth/email-verifications/` +
+        `${selfServiceOnboarding.dev_email_verification_token}/verify`
+      ),
+      {
+        method: "POST",
+      },
+    );
+    const verification =
+      (await verifyResponse.json()) as EmailVerificationResponse;
+    setEmailVerification(verification);
+
+    if (!verification.email_verified) {
+      return;
+    }
+
+    const checkpointResponse = await fetch(
+      (
+        `${apiBaseUrl}/api/participants/me/identity-checkpoint` +
+        "?action=membership_activation"
+      ),
+      {
+        headers: {
+          Authorization: `Bearer ${selfServiceOnboarding.access_token}`,
+        },
+      },
+    );
+
+    if (checkpointResponse.ok) {
+      const checkpoint = (await checkpointResponse.json()) as IdentityCheckpoint;
+      setIdentityCheckpoint(checkpoint);
+    }
+
+    const membershipResponse = await fetch(
+      `${apiBaseUrl}/api/participants/me/membership`,
+      {
+        headers: {
+          Authorization: `Bearer ${selfServiceOnboarding.access_token}`,
+        },
+      },
+    );
+    const membership =
+      (await membershipResponse.json()) as Partial<ParticipantMembership>;
+
+    if (membership.membership_status) {
+      const participantMembership = membership as ParticipantMembership;
+      setParticipantMembership(participantMembership);
+      setSession({
+        kind: "authenticated",
+        token: selfServiceOnboarding.access_token,
+        user: {
+          id: participantMembership.participant_id,
+          email: participantMembership.email,
+          display_name: participantMembership.display_name,
+          role: "participant",
+        },
+      });
+      void loadCurrentDocument(selfServiceOnboarding.access_token);
+      void loadContactChannels(selfServiceOnboarding.access_token);
     }
   }
 
@@ -445,6 +620,19 @@ export function App() {
     if (response.ok) {
       const records = (await response.json()) as AdminMutationRequest[];
       setAdminMutationRequests(records);
+    }
+  }
+
+  async function loadPartnerMutationPackages(token: string) {
+    const response = await fetch(`${apiBaseUrl}/api/partner/mutation-packages`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.ok) {
+      const packages = (await response.json()) as PartnerMutationPackageSummary[];
+      setPartnerPackages(packages);
     }
   }
 
@@ -665,6 +853,113 @@ export function App() {
     link.download = `mutation-package-${packageId}.${artifact}`;
     link.click();
     URL.revokeObjectURL(objectUrl);
+  }
+
+  async function loadPartnerPackageDetail(packageId: string) {
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setPartnerPackageError("");
+    const response = await fetch(
+      `${apiBaseUrl}/api/partner/mutation-packages/${packageId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+        },
+      },
+    );
+
+    if (response.ok) {
+      const detail = (await response.json()) as PartnerMutationPackageDetail;
+      setPartnerPackageDetails((current) => ({
+        ...current,
+        [packageId]: detail,
+      }));
+      setPartnerStatusDrafts((current) => ({
+        ...current,
+        [packageId]: current[packageId] ?? {
+          status: "received",
+          reference: "",
+        },
+      }));
+      return;
+    }
+
+    setPartnerPackageError("Mutationspaket konnte nicht geladen werden");
+  }
+
+  async function updatePartnerPackageStatus(
+    event: FormEvent<HTMLFormElement>,
+    packageId: string,
+  ) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    const draft = partnerStatusDrafts[packageId] ?? {
+      status: "received",
+      reference: "",
+    };
+    const reference = draft.reference.trim();
+    setPartnerPackageError("");
+    const response = await fetch(
+      `${apiBaseUrl}/api/partner/mutation-packages/${packageId}/status`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          status: draft.status,
+          ...(reference ? { reference } : {}),
+        }),
+      },
+    );
+
+    if (response.ok) {
+      const statusRead =
+        (await response.json()) as PartnerMutationPackageStatusRead;
+      const latestStatus = statusRead.status_history.at(-1);
+      setPartnerPackages((current) =>
+        current.map((mutationPackage) =>
+          mutationPackage.package_id === packageId
+            ? {
+                ...mutationPackage,
+                current_status: statusRead.current_status,
+                status_updated_at:
+                  latestStatus?.created_at ?? mutationPackage.status_updated_at,
+              }
+            : mutationPackage,
+        ),
+      );
+      setPartnerPackageDetails((current) => {
+        const detail = current[packageId];
+        if (!detail) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [packageId]: {
+            ...detail,
+            current_status: statusRead.current_status,
+            status_updated_at:
+              latestStatus?.created_at ?? detail.status_updated_at,
+            status_history: statusRead.status_history,
+          },
+        };
+      });
+      return;
+    }
+
+    const error = (await response.json()) as { detail?: string };
+    setPartnerPackageError(
+      error.detail ?? "Paketstatus konnte nicht aktualisiert werden",
+    );
   }
 
   async function submitConsentEvidence(event: FormEvent<HTMLFormElement>) {
@@ -1195,6 +1490,130 @@ export function App() {
     </section>
   );
 
+  const partnerPackageInbox = (
+    <section className="partner-package-inbox" aria-label="Mutationspaket-Eingang">
+      <h3>Mutationspaket-Eingang</h3>
+      {partnerPackages.length > 0 ? (
+        <div className="partner-package-list">
+          {partnerPackages.map((mutationPackage) => {
+            const detail = partnerPackageDetails[mutationPackage.package_id];
+            const draft = partnerStatusDrafts[mutationPackage.package_id] ?? {
+              status: "received",
+              reference: "",
+            };
+
+            return (
+              <div className="partner-package-item" key={mutationPackage.package_id}>
+                <p>Paket {mutationPackage.package_id}</p>
+                <p>{mutationPackage.quarter}</p>
+                <p>Wirksam ab: {mutationPackage.effective_date}</p>
+                <p>{mutationPackage.record_count} Mutation</p>
+                <p>Status: {mutationPackage.current_status}</p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void loadPartnerPackageDetail(mutationPackage.package_id)
+                  }
+                >
+                  Details anzeigen
+                </button>
+                {detail ? (
+                  <div className="partner-package-detail">
+                    {detail.records.map((record) => (
+                      <div key={record.mutation_request_id}>
+                        <p>{record.mutation_request_id}</p>
+                        <p>{record.participant_id}</p>
+                        <p>
+                          {record.new_address.street},{" "}
+                          {record.new_address.postal_code}{" "}
+                          {record.new_address.city},{" "}
+                          {record.new_address.country}
+                        </p>
+                      </div>
+                    ))}
+                    <div className="partner-status-history">
+                      {detail.status_history.map((statusEvent) => (
+                        <div
+                          key={`${statusEvent.status}-${statusEvent.created_at}`}
+                        >
+                          <p>Status: {statusEvent.status}</p>
+                          <p>{statusEvent.actor_role}</p>
+                          <p>{statusEvent.created_at}</p>
+                          {statusEvent.reference ? (
+                            <p>{statusEvent.reference}</p>
+                          ) : null}
+                          {statusEvent.reason ? <p>{statusEvent.reason}</p> : null}
+                        </div>
+                      ))}
+                    </div>
+                    <form
+                      className="partner-status-form"
+                      onSubmit={(event) =>
+                        void updatePartnerPackageStatus(
+                          event,
+                          mutationPackage.package_id,
+                        )
+                      }
+                    >
+                      <label>
+                        Paketstatus
+                        <select
+                          value={draft.status}
+                          onChange={(event) =>
+                            setPartnerStatusDrafts((current) => ({
+                              ...current,
+                              [mutationPackage.package_id]: {
+                                ...draft,
+                                status: event.target
+                                  .value as PartnerPackageStatusUpdate,
+                              },
+                            }))
+                          }
+                        >
+                          <option value="received">Empfangen</option>
+                          <option value="in_review">In Prüfung</option>
+                          <option value="processed">Verarbeitet</option>
+                          <option value="question">Rückfrage</option>
+                          <option value="technically_not_possible">
+                            Technisch nicht möglich
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        Referenz oder Grund
+                        <input
+                          type="text"
+                          value={draft.reference}
+                          onChange={(event) =>
+                            setPartnerStatusDrafts((current) => ({
+                              ...current,
+                              [mutationPackage.package_id]: {
+                                ...draft,
+                                reference: event.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                      <button type="submit">Status aktualisieren</button>
+                    </form>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p>Keine Mutationspakete</p>
+      )}
+      {partnerPackageError ? (
+        <div className="mutation-error" role="alert">
+          <p>{partnerPackageError}</p>
+        </div>
+      ) : null}
+    </section>
+  );
+
   return (
     <main className="portal-shell">
       <section className="hero-band" aria-labelledby="portal-title">
@@ -1301,6 +1720,7 @@ export function App() {
                 {adminMutationPackages}
               </>
             ) : null}
+            {session.user.role === "partner_admin" ? partnerPackageInbox : null}
             {session.user.role === "platform_admin" ? (
               <form
                 className="invitation-form document-version-form"
@@ -1371,6 +1791,55 @@ export function App() {
                 </button>
               ))}
             </div>
+            <form
+              className="invitation-form self-service-form"
+              onSubmit={startSelfServiceOnboarding}
+            >
+              <label>
+                Self-Service E-Mail
+                <input
+                  type="email"
+                  value={selfServiceEmail}
+                  onChange={(event) => setSelfServiceEmail(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Self-Service Anzeigename
+                <input
+                  type="text"
+                  value={selfServiceDisplayName}
+                  onChange={(event) =>
+                    setSelfServiceDisplayName(event.target.value)
+                  }
+                  required
+                />
+              </label>
+              <button type="submit">Self-Service starten</button>
+            </form>
+            {selfServiceOnboarding && identityCheckpoint ? (
+              <section
+                className="identity-checkpoint"
+                aria-label="Identitätsprüfung"
+              >
+                <h3>Identitätsprüfung</h3>
+                <p>Erforderlich: {identityCheckpoint.required_level}</p>
+                <p>Aktuell: {identityCheckpoint.current_level}</p>
+                <p>
+                  {identityCheckpoint.satisfied
+                    ? "Checkpoint erfüllt"
+                    : "Checkpoint offen"}
+                </p>
+                <p>{selfServiceOnboarding.dev_email_verification_token}</p>
+                <button
+                  type="button"
+                  disabled={identityCheckpoint.satisfied}
+                  onClick={() => void verifySelfServiceEmail()}
+                >
+                  Dev E-Mail verifizieren
+                </button>
+              </section>
+            ) : null}
             <form
               className="invitation-form"
               onSubmit={acceptParticipantInvitation}

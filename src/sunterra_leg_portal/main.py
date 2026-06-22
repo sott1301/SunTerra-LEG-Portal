@@ -46,6 +46,11 @@ class ParticipantInvitationCreate(BaseModel):
     display_name: str
 
 
+class SelfServiceOnboardingCreate(BaseModel):
+    email: str
+    display_name: str
+
+
 class ParticipantInvitationRead(BaseModel):
     token: str
     email: str
@@ -56,6 +61,7 @@ class ParticipantInvitationRead(BaseModel):
 
 class ParticipantInvitationRecord(ParticipantInvitationRead):
     participant_id: str | None = None
+    source: str = "admin_invitation"
 
 
 class CommunicationEventRead(BaseModel):
@@ -75,6 +81,37 @@ class ParticipantRecord(BaseModel):
     email_verified: bool
     phone_number: str | None = None
     preferred_contact_channel: str = "email"
+
+
+class IdentityCheckpointRead(BaseModel):
+    required_level: str
+    current_level: str
+    satisfied: bool
+
+
+class ParticipantIdentityCheckpointRead(IdentityCheckpointRead):
+    action: str
+
+
+class IdentityVerificationRead(BaseModel):
+    participant_id: str
+    email: str
+    display_name: str
+    leg_id: str
+    source: str
+    required_level: str
+    current_level: str
+    satisfied: bool
+    verified_at: str | None = None
+
+
+class SelfServiceOnboardingResponse(BaseModel):
+    access_token: str
+    token_type: str
+    participant_id: str
+    participant_status: str
+    identity_checkpoint: IdentityCheckpointRead
+    dev_email_verification_token: str
 
 
 class InvitationAcceptResponse(BaseModel):
@@ -287,15 +324,68 @@ class MutationPackageRead(BaseModel):
     status_history: list[MutationPackageStatusEvent]
 
 
+class MutationPackageStatusUpdate(BaseModel):
+    status: str
+    reference: str | None = None
+    reason: str | None = None
+
+
+class MutableMutationPackageStatusEvent(BaseModel):
+    status: str
+    actor_id: str
+    actor_role: str
+    created_at: str
+    reference: str | None = None
+    reason: str | None = None
+
+
+class AdminMutationPackageMetadataRead(BaseModel):
+    package_id: str
+    current_status: str
+    status_history: list[MutableMutationPackageStatusEvent]
+
+
+class PartnerMutationPackageStatusEvent(BaseModel):
+    status: str
+    actor_role: str
+    created_at: str
+    reference: str | None = None
+    reason: str | None = None
+
+
+class PartnerMutationPackageSummary(BaseModel):
+    package_id: str
+    leg_id: str
+    quarter: str
+    effective_date: str
+    generated_at: str
+    record_count: int
+    current_status: str
+    status_updated_at: str
+
+
+class PartnerMutationPackageStatusRead(BaseModel):
+    package_id: str
+    current_status: str
+    status_history: list[PartnerMutationPackageStatusEvent]
+
+
+class PartnerMutationPackageDetail(PartnerMutationPackageSummary):
+    records: list[MutationPackageRecord]
+    status_history: list[PartnerMutationPackageStatusEvent]
+
+
 INVITATIONS: dict[str, ParticipantInvitationRecord] = {}
 COMMUNICATION_EVENTS: list[CommunicationEventRead] = []
 PARTICIPANTS: dict[str, ParticipantRecord] = {}
+IDENTITY_VERIFICATIONS: dict[str, IdentityVerificationRead] = {}
 DOCUMENT_VERSIONS: dict[str, DocumentVersionRecord] = {}
 CONSENT_EVIDENCE: dict[str, list[ConsentEvidenceRead]] = {}
 MUTATION_REQUESTS: dict[str, list[MutationRequestRecord]] = {}
 PARTICIPANT_AUDIT_EVENTS: dict[str, list[AuditEventRead]] = {}
 FILE_EVIDENCE: dict[str, list[FileEvidenceRecord]] = {}
 MUTATION_PACKAGES: dict[str, MutationPackageRead] = {}
+MUTATION_PACKAGE_METADATA: dict[str, AdminMutationPackageMetadataRead] = {}
 PACKAGED_MUTATION_REQUEST_IDS: set[str] = set()
 
 FILE_EVIDENCE_PURPOSES = {
@@ -303,6 +393,13 @@ FILE_EVIDENCE_PURPOSES = {
         "access_protection": "mutation_review_owner_and_leg_admin",
         "retention_status": "retained_for_mutation_review",
     },
+}
+SUPPORTED_PARTNER_PACKAGE_STATUSES = {
+    "received",
+    "in_review",
+    "processed",
+    "question",
+    "technically_not_possible",
 }
 
 
@@ -332,6 +429,37 @@ def _verified_participant(user: CurrentUser) -> ParticipantRecord:
         raise HTTPException(status_code=403, detail="Email verification required")
 
     return participant
+
+
+def _identity_checkpoint(participant: ParticipantRecord) -> IdentityCheckpointRead:
+    current_level = "email_verified" if participant.email_verified else "unverified"
+
+    return IdentityCheckpointRead(
+        required_level="email_verified",
+        current_level=current_level,
+        satisfied=participant.email_verified,
+    )
+
+
+def _record_identity_verification(
+    participant: ParticipantRecord,
+    *,
+    source: str,
+    verified_at: str | None = None,
+) -> IdentityVerificationRead:
+    checkpoint = _identity_checkpoint(participant)
+    record = IdentityVerificationRead(
+        participant_id=participant.id,
+        email=participant.email,
+        display_name=participant.display_name,
+        leg_id=participant.leg_id,
+        source=source,
+        verified_at=verified_at,
+        **checkpoint.model_dump(),
+    )
+    IDENTITY_VERIFICATIONS[participant.id] = record
+
+    return record
 
 
 def _queue_email_event(event_type: str, recipient_email: str) -> CommunicationEventRead:
@@ -474,6 +602,79 @@ def _find_mutation_package(package_id: str) -> MutationPackageRead:
         raise HTTPException(status_code=404, detail="Mutation package not found")
 
     return mutation_package
+
+
+def _mutation_package_metadata(
+    package: MutationPackageRead,
+) -> AdminMutationPackageMetadataRead:
+    metadata = MUTATION_PACKAGE_METADATA.get(package.package_id)
+    if metadata is not None:
+        return metadata
+
+    status_history = [
+        MutableMutationPackageStatusEvent(
+            status=event.status,
+            actor_id=event.actor_id,
+            actor_role=event.actor_role,
+            created_at=event.created_at,
+        )
+        for event in package.status_history
+    ]
+    metadata = AdminMutationPackageMetadataRead(
+        package_id=package.package_id,
+        current_status=status_history[-1].status,
+        status_history=status_history,
+    )
+    MUTATION_PACKAGE_METADATA[package.package_id] = metadata
+
+    return metadata
+
+
+def _partner_status_read(
+    metadata: AdminMutationPackageMetadataRead,
+) -> PartnerMutationPackageStatusRead:
+    return PartnerMutationPackageStatusRead(
+        package_id=metadata.package_id,
+        current_status=metadata.current_status,
+        status_history=[
+            PartnerMutationPackageStatusEvent(
+                status=event.status,
+                actor_role=event.actor_role,
+                created_at=event.created_at,
+                reference=event.reference,
+                reason=event.reason,
+            )
+            for event in metadata.status_history
+        ],
+    )
+
+
+def _partner_mutation_package_summary(
+    package: MutationPackageRead,
+) -> PartnerMutationPackageSummary:
+    metadata = _mutation_package_metadata(package)
+    current_status = metadata.status_history[-1]
+    return PartnerMutationPackageSummary(
+        package_id=package.package_id,
+        leg_id=package.leg_id,
+        quarter=package.quarter,
+        effective_date=package.effective_date,
+        generated_at=package.generated_at,
+        record_count=len(package.records),
+        current_status=current_status.status,
+        status_updated_at=current_status.created_at,
+    )
+
+
+def _partner_mutation_package_detail(
+    package: MutationPackageRead,
+) -> PartnerMutationPackageDetail:
+    metadata = _mutation_package_metadata(package)
+    return PartnerMutationPackageDetail(
+        **_partner_mutation_package_summary(package).model_dump(),
+        records=package.records,
+        status_history=_partner_status_read(metadata).status_history,
+    )
 
 
 def _mutation_package_hash(package_data: dict) -> str:
@@ -708,6 +909,51 @@ def create_participant_invitation(
 
 
 @app.post(
+    "/api/auth/self-service-onboarding-requests",
+    response_model=SelfServiceOnboardingResponse,
+    status_code=201,
+)
+def create_self_service_onboarding_request(
+    onboarding_request: SelfServiceOnboardingCreate,
+) -> SelfServiceOnboardingResponse:
+    participant_id = uuid4().hex
+    verification_token = uuid4().hex
+    participant = ParticipantRecord(
+        id=participant_id,
+        email=onboarding_request.email,
+        display_name=onboarding_request.display_name,
+        leg_id=BASADINGEN_LEG_ID,
+        email_verified=False,
+    )
+    PARTICIPANTS[participant.id] = participant
+    INVITATIONS[verification_token] = ParticipantInvitationRecord(
+        token=verification_token,
+        email=participant.email,
+        display_name=participant.display_name,
+        leg_id=participant.leg_id,
+        status="pending_email_verification",
+        participant_id=participant.id,
+        source="self_service_onboarding",
+    )
+    register_dev_participant_user(
+        participant_id=participant.id,
+        email=participant.email,
+        display_name=participant.display_name,
+    )
+    _record_identity_verification(participant, source="self_service_onboarding")
+    _queue_email_event("email_verification", participant.email)
+
+    return SelfServiceOnboardingResponse(
+        access_token=f"dev:participant:{participant.id}",
+        token_type="bearer",
+        participant_id=participant.id,
+        participant_status="pending_email_verification",
+        identity_checkpoint=_identity_checkpoint(participant),
+        dev_email_verification_token=verification_token,
+    )
+
+
+@app.post(
     "/api/admin/document-versions",
     response_model=DocumentVersionRead,
     status_code=201,
@@ -749,6 +995,28 @@ def admin_mutation_requests(
             records.append(_admin_mutation_request_read(mutation_request))
 
     return records
+
+
+@app.get(
+    "/api/admin/participants/{participant_id}/identity-verification",
+    response_model=IdentityVerificationRead,
+)
+def admin_participant_identity_verification(
+    participant_id: str,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> IdentityVerificationRead:
+    participant = PARTICIPANTS.get(participant_id)
+    if participant is None:
+        raise HTTPException(status_code=404, detail="Participant not found")
+
+    verification = IDENTITY_VERIFICATIONS.get(participant.id)
+    if verification is None:
+        verification = _record_identity_verification(
+            participant,
+            source="admin_invitation",
+        )
+
+    return verification
 
 
 @app.post(
@@ -942,6 +1210,93 @@ def create_mutation_package(
     )
 
     return mutation_package
+
+
+@app.get(
+    "/api/partner/mutation-packages",
+    response_model=list[PartnerMutationPackageSummary],
+)
+def partner_mutation_packages(
+    _user: CurrentUser = Depends(require_roles(Role.PARTNER_ADMIN)),
+) -> list[PartnerMutationPackageSummary]:
+    return [
+        _partner_mutation_package_summary(package)
+        for package in sorted(
+            MUTATION_PACKAGES.values(),
+            key=lambda item: item.generated_at,
+            reverse=True,
+        )
+    ]
+
+
+@app.get(
+    "/api/partner/mutation-packages/{package_id}",
+    response_model=PartnerMutationPackageDetail,
+)
+def partner_mutation_package_detail(
+    package_id: str,
+    _user: CurrentUser = Depends(require_roles(Role.PARTNER_ADMIN)),
+) -> PartnerMutationPackageDetail:
+    package = _find_mutation_package(package_id)
+
+    return _partner_mutation_package_detail(package)
+
+
+@app.post(
+    "/api/partner/mutation-packages/{package_id}/status",
+    response_model=PartnerMutationPackageStatusRead,
+)
+def update_partner_mutation_package_status(
+    package_id: str,
+    status_update: MutationPackageStatusUpdate,
+    user: CurrentUser = Depends(require_roles(Role.PARTNER_ADMIN)),
+) -> PartnerMutationPackageStatusRead:
+    if status_update.status not in SUPPORTED_PARTNER_PACKAGE_STATUSES:
+        raise HTTPException(status_code=400, detail="Unsupported package status")
+
+    reference = (status_update.reference or "").strip() or None
+    reason = (status_update.reason or "").strip() or None
+    if (
+        status_update.status in {"question", "technically_not_possible"}
+        and reference is None
+        and reason is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Status question or technically_not_possible requires a "
+                "reference or reason"
+            ),
+        )
+
+    package = _find_mutation_package(package_id)
+    metadata = _mutation_package_metadata(package)
+    metadata.status_history.append(
+        MutableMutationPackageStatusEvent(
+            status=status_update.status,
+            actor_id=user.id,
+            actor_role=user.role.value,
+            created_at=datetime.now(UTC).isoformat(),
+            reference=reference,
+            reason=reason,
+        ),
+    )
+    metadata.current_status = status_update.status
+
+    return _partner_status_read(metadata)
+
+
+@app.get(
+    "/api/admin/mutation-packages/{package_id}",
+    response_model=AdminMutationPackageMetadataRead,
+)
+def admin_mutation_package_metadata(
+    package_id: str,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN)),
+) -> AdminMutationPackageMetadataRead:
+    package = _find_mutation_package(package_id)
+
+    return _mutation_package_metadata(package)
 
 
 @app.get(
@@ -1165,6 +1520,7 @@ def accept_participant_invitation(token: str) -> InvitationAcceptResponse:
         email_verified=False,
     )
     PARTICIPANTS[participant_id] = participant
+    _record_identity_verification(participant, source=invitation.source)
     register_dev_participant_user(
         participant_id=participant.id,
         email=participant.email,
@@ -1192,6 +1548,11 @@ def verify_participant_email(token: str) -> EmailVerificationResponse:
     participant = PARTICIPANTS[invitation.participant_id]
     participant.email_verified = True
     invitation.status = "active"
+    _record_identity_verification(
+        participant,
+        source=invitation.source,
+        verified_at=datetime.now(UTC).isoformat(),
+    )
     register_dev_participant_user(
         participant_id=participant.id,
         email=participant.email,
@@ -1218,6 +1579,28 @@ def participant_membership(
         raise HTTPException(status_code=403, detail="Email verification required")
 
     return _participant_membership_read(participant)
+
+
+@app.get(
+    "/api/participants/me/identity-checkpoint",
+    response_model=ParticipantIdentityCheckpointRead,
+)
+def participant_identity_checkpoint(
+    action: str,
+    user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
+) -> ParticipantIdentityCheckpointRead:
+    participant = PARTICIPANTS.get(user.id)
+    if participant is None:
+        raise HTTPException(status_code=404, detail="Participant not found")
+    if action != "membership_activation":
+        raise HTTPException(status_code=400, detail="Unsupported checkpoint action")
+
+    checkpoint = _identity_checkpoint(participant)
+
+    return ParticipantIdentityCheckpointRead(
+        action=action,
+        **checkpoint.model_dump(),
+    )
 
 
 @app.get(
