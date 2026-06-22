@@ -197,7 +197,13 @@ class MutationRequestCreate(BaseModel):
     mode: str
     requested_quarter: str
     submitted_on: date | None = None
-    new_address: AddressRead
+    new_address: AddressRead | None = None
+    metering_code: str | None = None
+    requested_role: str | None = None
+    technology: str | None = None
+    installed_capacity_kw: float | None = None
+    commissioned_on: date | None = None
+    reason: str | None = None
 
 
 class MutationRequestRead(BaseModel):
@@ -212,7 +218,8 @@ class MutationRequestRead(BaseModel):
     participant_deadline: str
     effective_date: str
     submitted_at: str
-    new_address: AddressRead
+    new_address: AddressRead | None = None
+    mutation_details: dict[str, str | float]
 
 
 class AuditEventRead(BaseModel):
@@ -302,7 +309,8 @@ class MutationPackageRecord(BaseModel):
     mutation_type: str
     mode: str
     effective_date: str
-    new_address: AddressRead
+    new_address: AddressRead | None = None
+    mutation_details: dict[str, str | float]
 
 
 class MutationPackageStatusEvent(BaseModel):
@@ -386,7 +394,7 @@ class PartnerMemberRead(BaseModel):
     participant_id: str
     display_name: str
     membership_status: str
-    reporting_address: AddressRead
+    reporting_address: AddressRead | None
     latest_package_status: PartnerMemberLatestPackageStatus
 
 
@@ -422,6 +430,7 @@ SUPPORTED_PARTNER_PACKAGE_STATUSES = {
     "question",
     "technically_not_possible",
 }
+SUPPORTED_MUTATION_ROLES = {"owner", "tenant", "producer", "prosumer"}
 
 
 def _document_hash(document: DocumentVersionCreate) -> str:
@@ -729,6 +738,14 @@ def _mutation_package_hash(package_data: dict) -> str:
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _mutation_details_json(record: MutationPackageRecord) -> str:
+    return json.dumps(
+        record.mutation_details,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def _mutation_package_csv(package: MutationPackageRead) -> str:
     output = StringIO()
     writer = csv.writer(output, lineterminator="\n")
@@ -747,6 +764,7 @@ def _mutation_package_csv(package: MutationPackageRead) -> str:
             "mutation_type",
             "mode",
             "record_effective_date",
+            "mutation_details_json",
             "street",
             "postal_code",
             "city",
@@ -759,6 +777,7 @@ def _mutation_package_csv(package: MutationPackageRead) -> str:
     )
     creation_event = package.status_history[0]
     for index, record in enumerate(package.records, start=1):
+        address = record.new_address
         writer.writerow(
             [
                 package.schema_version,
@@ -774,10 +793,11 @@ def _mutation_package_csv(package: MutationPackageRead) -> str:
                 record.mutation_type,
                 record.mode,
                 record.effective_date,
-                record.new_address.street,
-                record.new_address.postal_code,
-                record.new_address.city,
-                record.new_address.country,
+                _mutation_details_json(record),
+                address.street if address else "",
+                address.postal_code if address else "",
+                address.city if address else "",
+                address.country if address else "",
                 creation_event.status,
                 creation_event.actor_id,
                 creation_event.actor_role,
@@ -803,15 +823,24 @@ def _mutation_package_pdf_stream(package: MutationPackageRead) -> str:
         f"hash: {package.hash}",
         f"generated_at: {package.generated_at}",
     ]
-    lines.extend(
-        (
-            f"record {index}: {record.mutation_request_id} {record.participant_id} "
-            f"{record.mutation_type} {record.mode} {record.effective_date} "
-            f"{record.new_address.street}, {record.new_address.postal_code} "
-            f"{record.new_address.city}, {record.new_address.country}"
+    for index, record in enumerate(package.records, start=1):
+        address = record.new_address
+        address_text = (
+            (
+                f" {address.street}, {address.postal_code} "
+                f"{address.city}, {address.country}"
+            )
+            if address
+            else ""
         )
-        for index, record in enumerate(package.records, start=1)
-    )
+        lines.append(
+            (
+                f"record {index}: {record.mutation_request_id} "
+                f"{record.participant_id} {record.mutation_type} {record.mode} "
+                f"{record.effective_date} {_mutation_details_json(record)}"
+                f"{address_text}"
+            ),
+        )
     creation_event = package.status_history[0]
     lines.append(
         (
@@ -1222,6 +1251,7 @@ def create_mutation_package(
             mode=mutation_request.mode,
             effective_date=mutation_request.effective_date,
             new_address=mutation_request.new_address,
+            mutation_details=mutation_request.mutation_details,
         )
         for mutation_request in approved_requests
     ]
@@ -1523,15 +1553,86 @@ def create_participant_mutation_request(
     user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
 ) -> MutationRequestRead:
     participant = _verified_participant(user)
-    if mutation.mutation_type != "address" or mutation.mode != "regular":
+    if mutation.mode != "regular" or mutation.mutation_type not in {
+        "address",
+        "meter_point",
+        "role",
+        "generation_asset",
+        "entry",
+        "exit",
+    }:
         raise HTTPException(
             status_code=400,
-            detail="Only regular address mutations are supported",
+            detail=(
+                "Only regular address, meter point, role, generation asset, "
+                "entry, and exit mutations are supported"
+            ),
         )
+    if mutation.mutation_type == "address":
+        if mutation.new_address is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Address mutation requires new_address",
+            )
+        mutation_details = {
+            "street": mutation.new_address.street,
+            "postal_code": mutation.new_address.postal_code,
+            "city": mutation.new_address.city,
+            "country": mutation.new_address.country,
+        }
+    elif mutation.mutation_type == "meter_point":
+        metering_code = (mutation.metering_code or "").strip()
+        if not metering_code:
+            raise HTTPException(
+                status_code=400,
+                detail="Meter point mutation requires metering_code",
+            )
+        mutation_details = {"metering_code": metering_code}
+    elif mutation.mutation_type == "role":
+        requested_role = (mutation.requested_role or "").strip()
+        if requested_role not in SUPPORTED_MUTATION_ROLES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Role mutation requested_role must be one of owner, "
+                    "producer, prosumer, tenant"
+                ),
+            )
+        mutation_details = {"requested_role": requested_role}
+    elif mutation.mutation_type in {"entry", "exit"}:
+        reason = (mutation.reason or "").strip()
+        if not reason:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{mutation.mutation_type.capitalize()} mutation requires reason",
+            )
+        mutation_details = {"reason": reason}
+    else:
+        technology = (mutation.technology or "").strip()
+        if (
+            not technology
+            or mutation.installed_capacity_kw is None
+            or mutation.installed_capacity_kw <= 0
+            or mutation.commissioned_on is None
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Generation asset mutation requires technology, positive "
+                    "installed_capacity_kw, and commissioned_on"
+                ),
+            )
+        mutation_details = {
+            "technology": technology,
+            "installed_capacity_kw": mutation.installed_capacity_kw,
+            "commissioned_on": mutation.commissioned_on.isoformat(),
+        }
 
     participant_deadline, quarter_end, effective_date = (
         _regular_address_quarter_dates(mutation.requested_quarter)
     )
+    if mutation.mutation_type == "exit":
+        effective_date = quarter_end
     submitted_on = mutation.submitted_on or date.today()
     if submitted_on > date.fromisoformat(participant_deadline):
         raise HTTPException(
@@ -1556,6 +1657,7 @@ def create_participant_mutation_request(
         effective_date=effective_date,
         submitted_at=datetime.now(UTC).isoformat(),
         new_address=mutation.new_address,
+        mutation_details=mutation_details,
     )
     MUTATION_REQUESTS.setdefault(participant.id, []).append(mutation_request)
 

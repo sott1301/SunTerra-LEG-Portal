@@ -183,6 +183,12 @@ def test_leg_admin_can_package_one_approved_regular_address_mutation_for_quarter
                 "city": "Basadingen",
                 "country": "CH",
             },
+            "mutation_details": {
+                "street": "Hauptstrasse 7",
+                "postal_code": "8254",
+                "city": "Basadingen",
+                "country": "CH",
+            },
         },
     ]
     creation_event = payload["status_history"][0]
@@ -227,6 +233,12 @@ def test_leg_admin_can_download_json_artifact_for_mutation_package() -> None:
                     "city": "Basadingen",
                     "country": "CH",
                 },
+                "mutation_details": {
+                    "street": "Dorfstrasse 11",
+                    "postal_code": "8254",
+                    "city": "Basadingen",
+                    "country": "CH",
+                },
             },
         ],
         "hash": "<hash>",
@@ -260,12 +272,15 @@ def test_leg_admin_can_download_csv_artifact_for_mutation_package() -> None:
     assert stable_artifact_text(response.text, package) == (
         "schema_version,package_id,leg_id,quarter,effective_date,hash,"
         "generated_at,record_index,mutation_request_id,participant_id,"
-        "mutation_type,mode,record_effective_date,street,postal_code,city,"
-        "country,status,status_actor_id,status_actor_role,status_created_at\n"
+        "mutation_type,mode,record_effective_date,mutation_details_json,"
+        "street,postal_code,city,country,status,status_actor_id,"
+        "status_actor_role,status_created_at\n"
         "mutation-package.v1,<package-id>,basadingen,2026-Q3,2026-10-01,"
         "<hash>,<generated-at>,1,<mutation-request-id>,<participant-id>,"
-        "address,regular,2026-10-01,Oberdorf 3,8254,Basadingen,CH,created,"
-        "dev-leg-admin,leg_admin,<generated-at>\n"
+        'address,regular,2026-10-01,"{""city"":""Basadingen"",'
+        '""country"":""CH"",""postal_code"":""8254"",'
+        '""street"":""Oberdorf 3""}",Oberdorf 3,8254,Basadingen,CH,'
+        "created,dev-leg-admin,leg_admin,<generated-at>\n"
     )
 
 
@@ -306,7 +321,9 @@ def test_leg_admin_can_download_pdf_artifact_for_mutation_package() -> None:
         "(generated_at: <generated-at>) Tj\n"
         "0 -14 Td\n"
         "(record 1: <mutation-request-id> <participant-id> address regular "
-        "2026-10-01 Bahnhofstrasse 5, 8254 Basadingen, CH) Tj\n"
+        '2026-10-01 {"city":"Basadingen","country":"CH",'
+        '"postal_code":"8254","street":"Bahnhofstrasse 5"} '
+        "Bahnhofstrasse 5, 8254 Basadingen, CH) Tj\n"
         "0 -14 Td\n"
         "(status: created by dev-leg-admin leg_admin at <generated-at>) Tj\n"
         "ET"

@@ -106,11 +106,21 @@ type ParticipantContactChannels = {
   audit_events: AuditEvent[];
 };
 
+type MutationType =
+  | "address"
+  | "meter_point"
+  | "role"
+  | "generation_asset"
+  | "entry"
+  | "exit";
+
+type MutationDetails = Record<string, string | number>;
+
 type MutationRequest = {
   id: string;
   participant_id: string;
   leg_id: "basadingen";
-  mutation_type: "address";
+  mutation_type: MutationType;
   mode: "regular";
   status: "submitted" | "approved" | "rejected";
   quarter: string;
@@ -125,7 +135,8 @@ type MutationRequest = {
     postal_code: string;
     city: string;
     country: string;
-  };
+  } | null;
+  mutation_details: MutationDetails;
   audit_events: AuditEvent[];
 };
 
@@ -168,7 +179,7 @@ type MutationPackage = {
   records: Array<{
     mutation_request_id: string;
     participant_id: string;
-    mutation_type: "address";
+    mutation_type: MutationType;
     mode: "regular";
     effective_date: string;
     new_address: {
@@ -176,7 +187,8 @@ type MutationPackage = {
       postal_code: string;
       city: string;
       country: string;
-    };
+    } | null;
+    mutation_details: MutationDetails;
   }>;
   hash: string;
   generated_at: string;
@@ -240,7 +252,7 @@ type PartnerMemberRegister = {
       postal_code: string;
       city: string;
       country: string;
-    };
+    } | null;
     latest_package_status: {
       package_id: string;
       quarter: string;
@@ -295,12 +307,72 @@ const emptyFileEvidenceDraft: FileEvidenceDraft = {
   contentType: "text/plain",
   content: "",
 };
+const mutationTypeOptions: Array<{ value: MutationType; label: string }> = [
+  { value: "address", label: "Adressmutation" },
+  { value: "meter_point", label: "Messpunktmutation" },
+  { value: "role", label: "Rollenmutation" },
+  { value: "generation_asset", label: "Erzeugungsanlage" },
+  { value: "entry", label: "Eintritt" },
+  { value: "exit", label: "Austritt" },
+];
+const roleOptions = [
+  { value: "owner", label: "Eigentuemer" },
+  { value: "tenant", label: "Mieter" },
+  { value: "producer", label: "Produzent" },
+  { value: "prosumer", label: "Prosumer" },
+];
 
 function textToBase64(value: string) {
   const bytes = new TextEncoder().encode(value);
   const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
 
   return window.btoa(binary);
+}
+
+function mutationTypeLabel(mutationType: MutationType) {
+  return (
+    mutationTypeOptions.find((option) => option.value === mutationType)?.label ??
+    mutationType
+  );
+}
+
+function requestedRoleLabel(value: string | number | undefined) {
+  return (
+    roleOptions.find((option) => option.value === value)?.label ??
+    String(value ?? "")
+  );
+}
+
+function addressLine(address: MutationRequest["new_address"]) {
+  return address
+    ? `${address.street}, ${address.postal_code} ${address.city}, ${address.country}`
+    : "Keine Adresse";
+}
+
+function mutationDetailLines(
+  mutationType: MutationType,
+  details: MutationDetails,
+  newAddress: MutationRequest["new_address"],
+) {
+  if (mutationType === "address") {
+    return [`Adresse: ${addressLine(newAddress)}`];
+  }
+  if (mutationType === "meter_point") {
+    return [`Messpunkt: ${details.metering_code ?? ""}`];
+  }
+  if (mutationType === "role") {
+    return [`Rolle: ${requestedRoleLabel(details.requested_role)}`];
+  }
+  if (mutationType === "generation_asset") {
+    return [
+      (
+        `Erzeugungsanlage: ${details.technology ?? ""}, ` +
+        `${details.installed_capacity_kw ?? ""} kW, ` +
+        `Inbetriebnahme ${details.commissioned_on ?? ""}`
+      ),
+    ];
+  }
+  return [`Grund: ${details.reason ?? ""}`];
 }
 
 export function App() {
@@ -338,11 +410,18 @@ export function App() {
     useState<PreferredContactChannel>("email");
   const [contactChannelSaved, setContactChannelSaved] = useState(false);
   const [contactChannelError, setContactChannelError] = useState("");
+  const [mutationType, setMutationType] = useState<MutationType>("address");
   const [mutationQuarter, setMutationQuarter] = useState("2026-Q3");
   const [addressStreet, setAddressStreet] = useState("");
   const [addressPostalCode, setAddressPostalCode] = useState("");
   const [addressCity, setAddressCity] = useState("");
   const [addressCountry, setAddressCountry] = useState("CH");
+  const [meteringCode, setMeteringCode] = useState("");
+  const [requestedRole, setRequestedRole] = useState("owner");
+  const [generationTechnology, setGenerationTechnology] = useState("");
+  const [installedCapacityKw, setInstalledCapacityKw] = useState("");
+  const [commissionedOn, setCommissionedOn] = useState("");
+  const [mutationReason, setMutationReason] = useState("");
   const [mutationRequests, setMutationRequests] = useState<MutationRequest[]>(
     [],
   );
@@ -1043,11 +1122,39 @@ export function App() {
     }
   }
 
-  async function submitAddressMutation(event: FormEvent<HTMLFormElement>) {
+  async function submitMutation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (session.kind !== "authenticated") {
       return;
+    }
+
+    const mutationPayload: Record<string, unknown> = {
+      mutation_type: mutationType,
+      mode: "regular",
+      requested_quarter: mutationQuarter,
+    };
+    if (mutationType === "address") {
+      mutationPayload.new_address = {
+        street: addressStreet,
+        postal_code: addressPostalCode,
+        city: addressCity,
+        country: addressCountry,
+      };
+    }
+    if (mutationType === "meter_point") {
+      mutationPayload.metering_code = meteringCode;
+    }
+    if (mutationType === "role") {
+      mutationPayload.requested_role = requestedRole;
+    }
+    if (mutationType === "generation_asset") {
+      mutationPayload.technology = generationTechnology;
+      mutationPayload.installed_capacity_kw = Number(installedCapacityKw);
+      mutationPayload.commissioned_on = commissionedOn;
+    }
+    if (mutationType === "entry" || mutationType === "exit") {
+      mutationPayload.reason = mutationReason;
     }
 
     setMutationError("");
@@ -1057,17 +1164,7 @@ export function App() {
         Authorization: `Bearer ${session.token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        mutation_type: "address",
-        mode: "regular",
-        requested_quarter: mutationQuarter,
-        new_address: {
-          street: addressStreet,
-          postal_code: addressPostalCode,
-          city: addressCity,
-          country: addressCountry,
-        },
-      }),
+      body: JSON.stringify(mutationPayload),
     });
 
     if (response.ok) {
@@ -1238,9 +1335,24 @@ export function App() {
   );
 
   const addressMutationForm = (
-    <section className="address-mutations" aria-label="Adressmutation">
-      <form className="invitation-form address-mutation-form" onSubmit={submitAddressMutation}>
-        <h3>Adressmutation</h3>
+    <section className="address-mutations" aria-label="Meldepflichtige Mutation">
+      <form className="invitation-form address-mutation-form" onSubmit={submitMutation}>
+        <h3>{mutationTypeLabel(mutationType)}</h3>
+        <label>
+          Mutationstyp
+          <select
+            value={mutationType}
+            onChange={(event) =>
+              setMutationType(event.target.value as MutationType)
+            }
+          >
+            {mutationTypeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           Quartal
           <select
@@ -1253,43 +1365,121 @@ export function App() {
             <option value="2026-Q4">2026-Q4</option>
           </select>
         </label>
-        <label>
-          Strasse
-          <input
-            type="text"
-            value={addressStreet}
-            onChange={(event) => setAddressStreet(event.target.value)}
-            required
-          />
-        </label>
-        <label>
-          PLZ
-          <input
-            type="text"
-            value={addressPostalCode}
-            onChange={(event) => setAddressPostalCode(event.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Ort
-          <input
-            type="text"
-            value={addressCity}
-            onChange={(event) => setAddressCity(event.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Land
-          <input
-            type="text"
-            value={addressCountry}
-            onChange={(event) => setAddressCountry(event.target.value)}
-            required
-          />
-        </label>
-        <button type="submit">Adressmutation einreichen</button>
+        {mutationType === "address" ? (
+          <>
+            <label>
+              Strasse
+              <input
+                type="text"
+                value={addressStreet}
+                onChange={(event) => setAddressStreet(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              PLZ
+              <input
+                type="text"
+                value={addressPostalCode}
+                onChange={(event) => setAddressPostalCode(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Ort
+              <input
+                type="text"
+                value={addressCity}
+                onChange={(event) => setAddressCity(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Land
+              <input
+                type="text"
+                value={addressCountry}
+                onChange={(event) => setAddressCountry(event.target.value)}
+                required
+              />
+            </label>
+          </>
+        ) : null}
+        {mutationType === "meter_point" ? (
+          <label>
+            Messpunktcode
+            <input
+              type="text"
+              value={meteringCode}
+              onChange={(event) => setMeteringCode(event.target.value)}
+              required
+            />
+          </label>
+        ) : null}
+        {mutationType === "role" ? (
+          <label>
+            Gewuenschte Rolle
+            <select
+              value={requestedRole}
+              onChange={(event) => setRequestedRole(event.target.value)}
+            >
+              {roleOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {mutationType === "generation_asset" ? (
+          <>
+            <label>
+              Technologie
+              <input
+                type="text"
+                value={generationTechnology}
+                onChange={(event) => setGenerationTechnology(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Installierte Leistung kW
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={installedCapacityKw}
+                onChange={(event) => setInstalledCapacityKw(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Inbetriebnahme
+              <input
+                type="date"
+                value={commissionedOn}
+                onChange={(event) => setCommissionedOn(event.target.value)}
+                required
+              />
+            </label>
+          </>
+        ) : null}
+        {mutationType === "entry" || mutationType === "exit" ? (
+          <label>
+            Grund
+            <input
+              type="text"
+              value={mutationReason}
+              onChange={(event) => setMutationReason(event.target.value)}
+              required
+            />
+          </label>
+        ) : null}
+        <button type="submit">
+          {mutationType === "address"
+            ? "Adressmutation einreichen"
+            : "Mutation einreichen"}
+        </button>
         {mutationError ? (
           <div className="mutation-error" role="alert">
             <p>{mutationError}</p>
@@ -1301,7 +1491,15 @@ export function App() {
           <h3>Meine Mutationen</h3>
           {mutationRequests.map((mutationRequest) => (
             <div key={mutationRequest.id}>
+              <p>{mutationTypeLabel(mutationRequest.mutation_type)}</p>
               <p>{mutationRequest.quarter}</p>
+              {mutationDetailLines(
+                mutationRequest.mutation_type,
+                mutationRequest.mutation_details,
+                mutationRequest.new_address,
+              ).map((line) => (
+                <p key={line}>{line}</p>
+              ))}
               <p>Status: {mutationRequest.status}</p>
               <p>Teilnehmerfrist: {mutationRequest.participant_deadline}</p>
               <p>Wirksam ab: {mutationRequest.effective_date}</p>
@@ -1321,12 +1519,15 @@ export function App() {
             <div className="admin-mutation-item" key={mutationRequest.id}>
               <p>{mutationRequest.participant.display_name}</p>
               <p>{mutationRequest.participant.email}</p>
+              <p>{mutationTypeLabel(mutationRequest.mutation_type)}</p>
               <p>{mutationRequest.quarter}</p>
-              <p>
-                {mutationRequest.new_address.street},{" "}
-                {mutationRequest.new_address.postal_code}{" "}
-                {mutationRequest.new_address.city}
-              </p>
+              {mutationDetailLines(
+                mutationRequest.mutation_type,
+                mutationRequest.mutation_details,
+                mutationRequest.new_address,
+              ).map((line) => (
+                <p key={line}>{line}</p>
+              ))}
               <p>Status: {mutationRequest.status}</p>
               <p>Teilnehmerfrist: {mutationRequest.participant_deadline}</p>
               {mutationRequest.review_reason ? (
@@ -1574,12 +1775,17 @@ export function App() {
                       <div key={record.mutation_request_id}>
                         <p>{record.mutation_request_id}</p>
                         <p>{record.participant_id}</p>
-                        <p>
-                          {record.new_address.street},{" "}
-                          {record.new_address.postal_code}{" "}
-                          {record.new_address.city},{" "}
-                          {record.new_address.country}
-                        </p>
+                        <p>{mutationTypeLabel(record.mutation_type)}</p>
+                        {mutationDetailLines(
+                          record.mutation_type,
+                          record.mutation_details,
+                          record.new_address,
+                        ).map((line) => (
+                          <p key={line}>{line}</p>
+                        ))}
+                        {record.new_address ? (
+                          <p>{addressLine(record.new_address)}</p>
+                        ) : null}
                       </div>
                     ))}
                     <div className="partner-status-history">
@@ -1677,12 +1883,7 @@ export function App() {
                 <div className="partner-member-item" key={member.participant_id}>
                   <p>{member.display_name}</p>
                   <p>Status: {member.membership_status}</p>
-                  <p>
-                    {member.reporting_address.street},{" "}
-                    {member.reporting_address.postal_code}{" "}
-                    {member.reporting_address.city},{" "}
-                    {member.reporting_address.country}
-                  </p>
+                  <p>{addressLine(member.reporting_address)}</p>
                   <p>Paket {member.latest_package_status.package_id}</p>
                   <p>{member.latest_package_status.quarter}</p>
                   <p>Wirksam ab: {member.latest_package_status.effective_date}</p>

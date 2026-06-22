@@ -76,6 +76,12 @@ def test_verified_participant_can_submit_regular_address_mutation() -> None:
             "city": "Basadingen",
             "country": "CH",
         },
+        "mutation_details": {
+            "street": "Hauptstrasse 7",
+            "postal_code": "8254",
+            "city": "Basadingen",
+            "country": "CH",
+        },
     }
 
 
@@ -221,7 +227,7 @@ def test_late_regular_address_mutation_is_rejected() -> None:
     }
 
 
-def test_only_regular_address_mutations_are_accepted_in_first_mutation_slice() -> None:
+def test_special_mutation_mode_is_not_accepted_in_regular_flow() -> None:
     client = TestClient(app)
     participant_token = verified_participant_token(
         client,
@@ -232,8 +238,8 @@ def test_only_regular_address_mutations_are_accepted_in_first_mutation_slice() -
         "/api/participants/me/mutation-requests",
         headers={"Authorization": f"Bearer {participant_token}"},
         json={
-            "mutation_type": "role",
-            "mode": "regular",
+            "mutation_type": "address",
+            "mode": "special",
             "requested_quarter": "2026-Q3",
             "submitted_on": "2026-06-15",
             "new_address": {
@@ -247,7 +253,10 @@ def test_only_regular_address_mutations_are_accepted_in_first_mutation_slice() -
 
     assert response.status_code == 400
     assert response.json() == {
-        "detail": "Only regular address mutations are supported",
+        "detail": (
+            "Only regular address, meter point, role, generation asset, entry, "
+            "and exit mutations are supported"
+        ),
     }
 
 

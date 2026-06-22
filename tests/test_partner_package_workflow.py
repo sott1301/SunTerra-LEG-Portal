@@ -351,6 +351,12 @@ def test_partner_admin_can_inspect_redacted_package_detail() -> None:
                     "city": "Basadingen",
                     "country": "CH",
                 },
+                "mutation_details": {
+                    "street": "Detailweg 8",
+                    "postal_code": "8254",
+                    "city": "Basadingen",
+                    "country": "CH",
+                },
             },
         ],
         "status_history": [
