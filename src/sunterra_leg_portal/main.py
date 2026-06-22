@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from sunterra_leg_portal.auth import (
     CurrentUser,
@@ -156,11 +156,46 @@ class MutationRequestRead(BaseModel):
     new_address: AddressRead
 
 
+class AuditEventRead(BaseModel):
+    id: str
+    action: str
+    actor_role: str
+    created_at: str
+    from_status: str | None = None
+    to_status: str | None = None
+    reason: str | None = None
+
+
+class MutationRequestRecord(MutationRequestRead):
+    reviewed_at: str | None = None
+    review_reason: str | None = None
+    audit_events: list[AuditEventRead] = Field(default_factory=list)
+
+
+class ParticipantMutationRequestRead(MutationRequestRecord):
+    pass
+
+
+class AdminMutationParticipantRead(BaseModel):
+    participant_id: str
+    display_name: str
+    email: str
+
+
+class AdminMutationRequestRead(MutationRequestRecord):
+    participant: AdminMutationParticipantRead
+
+
+class MutationReviewDecision(BaseModel):
+    decision: str
+    reason: str | None = None
+
+
 INVITATIONS: dict[str, ParticipantInvitationRecord] = {}
 PARTICIPANTS: dict[str, ParticipantRecord] = {}
 DOCUMENT_VERSIONS: dict[str, DocumentVersionRecord] = {}
 CONSENT_EVIDENCE: dict[str, list[ConsentEvidenceRead]] = {}
-MUTATION_REQUESTS: dict[str, list[MutationRequestRead]] = {}
+MUTATION_REQUESTS: dict[str, list[MutationRequestRecord]] = {}
 
 
 def _document_hash(document: DocumentVersionCreate) -> str:
@@ -250,6 +285,29 @@ def _regular_address_quarter_dates(quarter: str) -> tuple[str, str, str]:
     )
 
 
+def _admin_mutation_request_read(
+    mutation_request: MutationRequestRecord,
+) -> AdminMutationRequestRead:
+    participant = PARTICIPANTS[mutation_request.participant_id]
+    return AdminMutationRequestRead(
+        **mutation_request.model_dump(),
+        participant=AdminMutationParticipantRead(
+            participant_id=participant.id,
+            display_name=participant.display_name,
+            email=participant.email,
+        ),
+    )
+
+
+def _find_mutation_request(mutation_request_id: str) -> MutationRequestRecord:
+    for participant_requests in MUTATION_REQUESTS.values():
+        for mutation_request in participant_requests:
+            if mutation_request.id == mutation_request_id:
+                return mutation_request
+
+    raise HTTPException(status_code=404, detail="Mutation request not found")
+
+
 app = FastAPI(title="SunTerra LEG Portal", version="0.1.0", lifespan=production_lifespan)
 app.add_middleware(
     CORSMiddleware,
@@ -330,6 +388,72 @@ def publish_document_version(
     DOCUMENT_VERSIONS[record.id] = record
 
     return DocumentVersionRead(**record.model_dump())
+
+
+@app.get(
+    "/api/admin/mutation-requests",
+    response_model=list[AdminMutationRequestRead],
+)
+def admin_mutation_requests(
+    status: str | None = None,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> list[AdminMutationRequestRead]:
+    records: list[AdminMutationRequestRead] = []
+    for participant_requests in MUTATION_REQUESTS.values():
+        for mutation_request in participant_requests:
+            if mutation_request.leg_id != BASADINGEN_LEG_ID:
+                continue
+            if status is not None and mutation_request.status != status:
+                continue
+            records.append(_admin_mutation_request_read(mutation_request))
+
+    return records
+
+
+@app.post(
+    "/api/admin/mutation-requests/{mutation_request_id}/review-decision",
+    response_model=AdminMutationRequestRead,
+)
+def review_mutation_request(
+    mutation_request_id: str,
+    decision: MutationReviewDecision,
+    user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN)),
+) -> AdminMutationRequestRead:
+    if decision.decision not in {"approved", "rejected"}:
+        raise HTTPException(status_code=400, detail="Unsupported review decision")
+
+    mutation_request = _find_mutation_request(mutation_request_id)
+    if mutation_request.status != "submitted":
+        raise HTTPException(
+            status_code=400,
+            detail="Mutation request has already been reviewed",
+        )
+    if decision.decision == "rejected" and not (decision.reason or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Rejecting a mutation request requires a reason",
+        )
+
+    from_status = mutation_request.status
+    reviewed_at = datetime.now(UTC).isoformat()
+    mutation_request.status = decision.decision
+    mutation_request.reviewed_at = reviewed_at
+    mutation_request.review_reason = (
+        decision.reason if decision.decision == "rejected" else None
+    )
+    mutation_request.audit_events.append(
+        AuditEventRead(
+            id=uuid4().hex,
+            action=f"mutation_request.{decision.decision}",
+            actor_role=user.role.value,
+            created_at=reviewed_at,
+            from_status=from_status,
+            to_status=decision.decision,
+            reason=mutation_request.review_reason,
+        ),
+    )
+
+    return _admin_mutation_request_read(mutation_request)
 
 
 @app.get("/api/documents/current", response_model=CurrentDocumentRead)
@@ -422,7 +546,7 @@ def create_participant_mutation_request(
             ),
         )
 
-    mutation_request = MutationRequestRead(
+    mutation_request = MutationRequestRecord(
         id=uuid4().hex,
         participant_id=participant.id,
         leg_id=participant.leg_id,
@@ -443,11 +567,11 @@ def create_participant_mutation_request(
 
 @app.get(
     "/api/participants/me/mutation-requests",
-    response_model=list[MutationRequestRead],
+    response_model=list[ParticipantMutationRequestRead],
 )
 def participant_mutation_requests(
     user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
-) -> list[MutationRequestRead]:
+) -> list[ParticipantMutationRequestRead]:
     participant = _verified_participant(user)
 
     return MUTATION_REQUESTS.get(participant.id, [])

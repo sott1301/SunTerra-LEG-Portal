@@ -103,6 +103,9 @@ def test_participant_can_view_own_mutation_status_and_effective_date() -> None:
             **submitted,
             "status": "submitted",
             "effective_date": "2026-10-01",
+            "reviewed_at": None,
+            "review_reason": None,
+            "audit_events": [],
         },
     ]
 

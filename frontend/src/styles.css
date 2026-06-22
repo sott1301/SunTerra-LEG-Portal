@@ -311,3 +311,71 @@ h1 {
   border-left: 4px solid #c2410c;
   background: #ffffff;
 }
+
+.admin-mutation-inbox {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+  margin-top: 22px;
+}
+
+.admin-mutation-inbox h3,
+.admin-mutation-inbox p {
+  margin: 0;
+}
+
+.admin-mutation-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-mutation-item {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-left: 4px solid #2f6f3e;
+  background: #ffffff;
+}
+
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+
+.review-actions label {
+  display: grid;
+  gap: 6px;
+  min-width: min(100%, 280px);
+  color: #344054;
+  font-weight: 700;
+}
+
+.review-actions input {
+  min-height: 40px;
+  box-sizing: border-box;
+  border: 1px solid #bdc9b4;
+  border-radius: 6px;
+  padding: 0 12px;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.review-actions button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #2f6f3e;
+  border-radius: 6px;
+  background: #2f6f3e;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.review-actions button:disabled,
+.review-actions input:disabled {
+  border-color: #9ca3af;
+  background: #eef0ec;
+  color: #667085;
+  cursor: not-allowed;
+}

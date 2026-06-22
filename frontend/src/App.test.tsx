@@ -261,6 +261,233 @@ describe("Portal shell", () => {
     expect(screen.getByText("invite-token-anna")).toBeTruthy();
   });
 
+  it("zeigt LEG Admins offene Mutationen und erlaubt Genehmigung oder Ablehnung", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-leg-admin",
+            email: "leg-admin@example.test",
+            display_name: "LEG Admin Demo",
+            role: "leg_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/mutation-requests?status=submitted")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+        });
+
+        return new Response(
+          JSON.stringify([
+            {
+              id: "mutation-request-approve",
+              participant_id: "participant-anna",
+              leg_id: "basadingen",
+              mutation_type: "address",
+              mode: "regular",
+              status: "submitted",
+              quarter: "2026-Q3",
+              quarter_end: "2026-09-30",
+              participant_deadline: "2026-06-30",
+              effective_date: "2026-10-01",
+              submitted_at: "2026-06-15T12:00:00+00:00",
+              reviewed_at: null,
+              review_reason: null,
+              new_address: {
+                street: "Hauptstrasse 7",
+                postal_code: "8254",
+                city: "Basadingen",
+                country: "CH",
+              },
+              participant: {
+                participant_id: "participant-anna",
+                display_name: "Anna Keller",
+                email: "anna.keller@example.test",
+              },
+              audit_events: [],
+            },
+            {
+              id: "mutation-request-reject",
+              participant_id: "participant-bernd",
+              leg_id: "basadingen",
+              mutation_type: "address",
+              mode: "regular",
+              status: "submitted",
+              quarter: "2026-Q4",
+              quarter_end: "2026-12-31",
+              participant_deadline: "2026-09-30",
+              effective_date: "2027-01-01",
+              submitted_at: "2026-06-16T12:00:00+00:00",
+              reviewed_at: null,
+              review_reason: null,
+              new_address: {
+                street: "Dorfstrasse 2",
+                postal_code: "8254",
+                city: "Basadingen",
+                country: "CH",
+              },
+              participant: {
+                participant_id: "participant-bernd",
+                display_name: "Bernd Berger",
+                email: "bernd.berger@example.test",
+              },
+              audit_events: [],
+            },
+          ]),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (
+        url.endsWith(
+          "/api/admin/mutation-requests/mutation-request-approve/review-decision",
+        )
+      ) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          decision: "approved",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "mutation-request-approve",
+            participant_id: "participant-anna",
+            leg_id: "basadingen",
+            mutation_type: "address",
+            mode: "regular",
+            status: "approved",
+            quarter: "2026-Q3",
+            quarter_end: "2026-09-30",
+            participant_deadline: "2026-06-30",
+            effective_date: "2026-10-01",
+            submitted_at: "2026-06-15T12:00:00+00:00",
+            reviewed_at: "2026-06-17T12:00:00+00:00",
+            review_reason: null,
+            new_address: {
+              street: "Hauptstrasse 7",
+              postal_code: "8254",
+              city: "Basadingen",
+              country: "CH",
+            },
+            participant: {
+              participant_id: "participant-anna",
+              display_name: "Anna Keller",
+              email: "anna.keller@example.test",
+            },
+            audit_events: [],
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (
+        url.endsWith(
+          "/api/admin/mutation-requests/mutation-request-reject/review-decision",
+        )
+      ) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          decision: "rejected",
+          reason: "Adresse gehoert nicht zum LEG Perimeter.",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "mutation-request-reject",
+            participant_id: "participant-bernd",
+            leg_id: "basadingen",
+            mutation_type: "address",
+            mode: "regular",
+            status: "rejected",
+            quarter: "2026-Q4",
+            quarter_end: "2026-12-31",
+            participant_deadline: "2026-09-30",
+            effective_date: "2027-01-01",
+            submitted_at: "2026-06-16T12:00:00+00:00",
+            reviewed_at: "2026-06-17T12:05:00+00:00",
+            review_reason: "Adresse gehoert nicht zum LEG Perimeter.",
+            new_address: {
+              street: "Dorfstrasse 2",
+              postal_code: "8254",
+              city: "Basadingen",
+              country: "CH",
+            },
+            participant: {
+              participant_id: "participant-bernd",
+              display_name: "Bernd Berger",
+              email: "bernd.berger@example.test",
+            },
+            audit_events: [],
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    screen.getByRole("button", { name: "LEG Admin" }).click();
+
+    expect(await screen.findByText("Offene Mutationen")).toBeTruthy();
+    const inbox = within(screen.getByLabelText("Offene Mutationen"));
+    const approveRequest = within(inbox.getByText("Anna Keller").closest("div")!);
+    const rejectRequest = within(inbox.getByText("Bernd Berger").closest("div")!);
+
+    approveRequest.getByRole("button", { name: "Genehmigen" }).click();
+    fireEvent.change(rejectRequest.getByLabelText("Ablehnungsgrund"), {
+      target: { value: "Adresse gehoert nicht zum LEG Perimeter." },
+    });
+    rejectRequest.getByRole("button", { name: "Ablehnen" }).click();
+
+    expect(await screen.findByText("Status: approved")).toBeTruthy();
+    expect(await screen.findByText("Status: rejected")).toBeTruthy();
+    expect(
+      screen.getByText("Adresse gehoert nicht zum LEG Perimeter."),
+    ).toBeTruthy();
+  });
+
   it("veroeffentlicht als Plattform-Admin eine Dokumentversion", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
