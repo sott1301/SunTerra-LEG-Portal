@@ -47,6 +47,30 @@ type ParticipantMembership = {
   billing_notice: string;
 };
 
+type DocumentVersion = {
+  id: string;
+  document_key: "portal_terms";
+  title: string;
+  version: string;
+  document_hash: string;
+  context: "participant_onboarding";
+  published_at: string;
+};
+
+type CurrentDocument = DocumentVersion & {
+  content: string;
+};
+
+type ConsentEvidence = {
+  participant_id: string;
+  document_version_id: string;
+  document_key: "portal_terms";
+  version: string;
+  document_hash: string;
+  context: "participant_onboarding";
+  accepted_at: string;
+};
+
 type BackendState =
   | { kind: "checking" }
   | { kind: "connected"; health: HealthStatus }
@@ -94,6 +118,16 @@ export function App() {
     useState<EmailVerificationResponse | null>(null);
   const [participantMembership, setParticipantMembership] =
     useState<ParticipantMembership | null>(null);
+  const [documentTitle, setDocumentTitle] = useState("");
+  const [documentVersion, setDocumentVersion] = useState("");
+  const [documentContent, setDocumentContent] = useState("");
+  const [publishedDocumentVersion, setPublishedDocumentVersion] =
+    useState<DocumentVersion | null>(null);
+  const [currentDocument, setCurrentDocument] =
+    useState<CurrentDocument | null>(null);
+  const [consentChecked, setConsentChecked] = useState(false);
+  const [consentSaved, setConsentSaved] = useState(false);
+  const [consentHistory, setConsentHistory] = useState<ConsentEvidence[]>([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -133,6 +167,9 @@ export function App() {
 
     const user = (await response.json()) as CurrentUser;
     setSession({ kind: "authenticated", token, user });
+    if (user.role === "participant") {
+      void loadCurrentDocument(token);
+    }
   }
 
   function loginAs(role: Role) {
@@ -166,6 +203,93 @@ export function App() {
     if (response.ok) {
       const invitation = (await response.json()) as ParticipantInvitation;
       setParticipantInvitation(invitation);
+    }
+  }
+
+  async function publishDocumentVersion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    const response = await fetch(`${apiBaseUrl}/api/admin/document-versions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        document_key: "portal_terms",
+        title: documentTitle,
+        version: documentVersion,
+        content: documentContent,
+        context: "participant_onboarding",
+      }),
+    });
+
+    if (response.ok) {
+      const published = (await response.json()) as DocumentVersion;
+      setPublishedDocumentVersion(published);
+    }
+  }
+
+  async function loadCurrentDocument(token: string) {
+    const response = await fetch(
+      `${apiBaseUrl}/api/documents/current?document_key=portal_terms`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+
+    if (response.ok) {
+      const document = (await response.json()) as CurrentDocument;
+      setCurrentDocument(document);
+    }
+  }
+
+  async function loadConsentHistory(token: string) {
+    const response = await fetch(`${apiBaseUrl}/api/participants/me/consent-evidence`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.ok) {
+      const history = (await response.json()) as ConsentEvidence[];
+      setConsentHistory(history);
+    }
+  }
+
+  async function submitConsentEvidence(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (
+      session.kind !== "authenticated" ||
+      currentDocument === null ||
+      !consentChecked
+    ) {
+      return;
+    }
+
+    const response = await fetch(`${apiBaseUrl}/api/participants/me/consent-evidence`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        document_version_id: currentDocument.id,
+        context: "participant_onboarding",
+        accepted: true,
+      }),
+    });
+
+    if (response.ok) {
+      setConsentSaved(true);
+      await loadConsentHistory(session.token);
     }
   }
 
@@ -213,7 +337,19 @@ export function App() {
       (await membershipResponse.json()) as Partial<ParticipantMembership>;
 
     if (membership.membership_status) {
-      setParticipantMembership(membership as ParticipantMembership);
+      const participantMembership = membership as ParticipantMembership;
+      setParticipantMembership(participantMembership);
+      setSession({
+        kind: "authenticated",
+        token: acceptance.access_token,
+        user: {
+          id: participantMembership.participant_id,
+          email: participantMembership.email,
+          display_name: participantMembership.display_name,
+          role: "participant",
+        },
+      });
+      void loadCurrentDocument(acceptance.access_token);
     }
   }
 
@@ -221,6 +357,42 @@ export function App() {
     session.kind === "authenticated"
       ? demoRoles.find((demoRole) => demoRole.role === session.user.role)
       : undefined;
+
+  const documentConsentForm = currentDocument ? (
+    <form className="document-consent" onSubmit={submitConsentEvidence}>
+      <h3>{currentDocument.title}</h3>
+      <p>Version {currentDocument.version}</p>
+      <p>{currentDocument.content}</p>
+      <p>{currentDocument.document_hash}</p>
+      <label>
+        <input
+          type="checkbox"
+          checked={consentChecked}
+          onChange={(event) => setConsentChecked(event.target.checked)}
+        />
+        Ich stimme dieser Dokumentversion zu
+      </label>
+      <button type="submit" disabled={!consentChecked}>
+        Zustimmen
+      </button>
+      {consentSaved ? (
+        <div className="invitation-result" role="status">
+          <p>Einwilligung gespeichert</p>
+        </div>
+      ) : null}
+      {consentHistory.length > 0 ? (
+        <section className="consent-history" aria-label="Einwilligungshistorie">
+          <h3>Einwilligungshistorie</h3>
+          {consentHistory.map((evidence) => (
+            <div key={`${evidence.document_version_id}-${evidence.accepted_at}`}>
+              <p>Version {evidence.version}</p>
+              <p>{evidence.document_hash}</p>
+            </div>
+          ))}
+        </section>
+      ) : null}
+    </form>
+  ) : null;
 
   return (
     <main className="portal-shell">
@@ -281,6 +453,7 @@ export function App() {
                 <p>{emailVerification.participant_id}</p>
               </div>
             ) : null}
+            {documentConsentForm}
           </div>
         ) : session.kind === "authenticated" && activeWorkspace ? (
           <div>
@@ -321,6 +494,52 @@ export function App() {
                 ) : null}
               </form>
             ) : null}
+            {session.user.role === "platform_admin" ? (
+              <form
+                className="invitation-form document-version-form"
+                onSubmit={publishDocumentVersion}
+              >
+                <label>
+                  Titel
+                  <input
+                    type="text"
+                    value={documentTitle}
+                    onChange={(event) => setDocumentTitle(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Version
+                  <input
+                    type="text"
+                    value={documentVersion}
+                    onChange={(event) =>
+                      setDocumentVersion(event.target.value)
+                    }
+                    required
+                  />
+                </label>
+                <label>
+                  Inhalt
+                  <textarea
+                    value={documentContent}
+                    onChange={(event) =>
+                      setDocumentContent(event.target.value)
+                    }
+                    required
+                  />
+                </label>
+                <button type="submit">Dokumentversion veröffentlichen</button>
+                {publishedDocumentVersion ? (
+                  <div className="invitation-result" role="status">
+                    <p>Dokumentversion veröffentlicht</p>
+                    <p>{publishedDocumentVersion.version}</p>
+                    <p>{publishedDocumentVersion.document_hash}</p>
+                  </div>
+                ) : null}
+              </form>
+            ) : null}
+            {session.user.role === "participant" ? documentConsentForm : null}
           </div>
         ) : (
           <>

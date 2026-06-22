@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+from hashlib import sha256
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -82,8 +84,80 @@ class ParticipantMembershipRead(BaseModel):
     billing_notice: str
 
 
+class DocumentVersionCreate(BaseModel):
+    document_key: str
+    title: str
+    version: str
+    content: str
+    context: str
+
+
+class DocumentVersionRead(BaseModel):
+    id: str
+    document_key: str
+    title: str
+    version: str
+    document_hash: str
+    context: str
+    published_at: str
+
+
+class CurrentDocumentRead(DocumentVersionRead):
+    content: str
+
+
+class DocumentVersionRecord(DocumentVersionRead):
+    content: str
+
+
+class ConsentEvidenceCreate(BaseModel):
+    document_version_id: str
+    context: str
+    accepted: bool
+
+
+class ConsentEvidenceRead(BaseModel):
+    participant_id: str
+    document_version_id: str
+    document_key: str
+    version: str
+    document_hash: str
+    context: str
+    accepted_at: str
+
+
 INVITATIONS: dict[str, ParticipantInvitationRecord] = {}
 PARTICIPANTS: dict[str, ParticipantRecord] = {}
+DOCUMENT_VERSIONS: dict[str, DocumentVersionRecord] = {}
+CONSENT_EVIDENCE: dict[str, list[ConsentEvidenceRead]] = {}
+
+
+def _document_hash(document: DocumentVersionCreate) -> str:
+    source = "\x1f".join(
+        [
+            document.document_key,
+            document.version,
+            document.content,
+            document.context,
+        ],
+    )
+    return sha256(source.encode("utf-8")).hexdigest()
+
+
+def _current_document_version(document_key: str) -> DocumentVersionRecord | None:
+    for document in reversed(DOCUMENT_VERSIONS.values()):
+        if document.document_key == document_key:
+            return document
+
+    return None
+
+
+def _verified_participant(user: CurrentUser) -> ParticipantRecord:
+    participant = PARTICIPANTS.get(user.id)
+    if participant is None or not participant.email_verified:
+        raise HTTPException(status_code=403, detail="Email verification required")
+
+    return participant
 
 
 def _participant_membership_read(
@@ -160,6 +234,90 @@ def create_participant_invitation(
         leg_id=record.leg_id,
         status=record.status,
     )
+
+
+@app.post(
+    "/api/admin/document-versions",
+    response_model=DocumentVersionRead,
+    status_code=201,
+)
+def publish_document_version(
+    document: DocumentVersionCreate,
+    _user: CurrentUser = Depends(require_roles(Role.PLATFORM_ADMIN)),
+) -> DocumentVersionRead:
+    record = DocumentVersionRecord(
+        id=uuid4().hex,
+        document_key=document.document_key,
+        title=document.title,
+        version=document.version,
+        content=document.content,
+        document_hash=_document_hash(document),
+        context=document.context,
+        published_at=datetime.now(UTC).isoformat(),
+    )
+    DOCUMENT_VERSIONS[record.id] = record
+
+    return DocumentVersionRead(**record.model_dump())
+
+
+@app.get("/api/documents/current", response_model=CurrentDocumentRead)
+def current_document_version(
+    document_key: str,
+    user: CurrentUser = Depends(current_user),
+) -> CurrentDocumentRead:
+    if user.role == Role.PARTICIPANT:
+        _verified_participant(user)
+
+    document = _current_document_version(document_key)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document version not found")
+
+    return CurrentDocumentRead(**document.model_dump())
+
+
+@app.post(
+    "/api/participants/me/consent-evidence",
+    response_model=ConsentEvidenceRead,
+    status_code=201,
+)
+def record_consent_evidence(
+    consent: ConsentEvidenceCreate,
+    user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
+) -> ConsentEvidenceRead:
+    participant = _verified_participant(user)
+    if not consent.accepted:
+        raise HTTPException(status_code=400, detail="Consent must be accepted")
+
+    document = DOCUMENT_VERSIONS.get(consent.document_version_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document version not found")
+    if document.context != consent.context:
+        raise HTTPException(status_code=400, detail="Document context mismatch")
+
+    evidence = ConsentEvidenceRead(
+        participant_id=participant.id,
+        document_version_id=document.id,
+        document_key=document.document_key,
+        version=document.version,
+        document_hash=document.document_hash,
+        context=consent.context,
+        accepted_at=datetime.now(UTC).isoformat(),
+    )
+    CONSENT_EVIDENCE.setdefault(participant.id, []).append(evidence)
+
+    return evidence
+
+
+@app.get(
+    "/api/participants/me/consent-evidence",
+    response_model=list[ConsentEvidenceRead],
+)
+def participant_consent_history(
+    user: CurrentUser = Depends(require_roles(Role.PARTICIPANT)),
+) -> list[ConsentEvidenceRead]:
+    participant = _verified_participant(user)
+
+    return CONSENT_EVIDENCE.get(participant.id, [])
 
 
 @app.post(
