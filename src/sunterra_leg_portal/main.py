@@ -1,5 +1,6 @@
 import csv
 import json
+from base64 import b64decode
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from io import StringIO
@@ -55,6 +56,15 @@ class ParticipantInvitationRead(BaseModel):
 
 class ParticipantInvitationRecord(ParticipantInvitationRead):
     participant_id: str | None = None
+
+
+class CommunicationEventRead(BaseModel):
+    id: str
+    channel: str
+    event_type: str
+    recipient_email: str
+    status: str
+    created_at: str
 
 
 class ParticipantRecord(BaseModel):
@@ -211,6 +221,40 @@ class MutationReviewDecision(BaseModel):
     reason: str | None = None
 
 
+class FileEvidenceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_type: str
+    purpose: str
+    version: str
+    filename: str
+    content_type: str
+    content_base64: str
+
+
+class FileEvidenceMetadataRead(BaseModel):
+    id: str
+    mutation_request_id: str
+    participant_id: str
+    document_type: str
+    purpose: str
+    version: str
+    filename: str
+    content_type: str
+    sha256_hash: str
+    access_protection: str
+    retention_status: str
+    created_at: str
+
+
+class FileEvidenceRecord(FileEvidenceMetadataRead):
+    content_base64: str
+
+
+class FileEvidenceContentRead(FileEvidenceMetadataRead):
+    content_base64: str
+
+
 class MutationPackageCreate(BaseModel):
     quarter: str
 
@@ -244,13 +288,22 @@ class MutationPackageRead(BaseModel):
 
 
 INVITATIONS: dict[str, ParticipantInvitationRecord] = {}
+COMMUNICATION_EVENTS: list[CommunicationEventRead] = []
 PARTICIPANTS: dict[str, ParticipantRecord] = {}
 DOCUMENT_VERSIONS: dict[str, DocumentVersionRecord] = {}
 CONSENT_EVIDENCE: dict[str, list[ConsentEvidenceRead]] = {}
 MUTATION_REQUESTS: dict[str, list[MutationRequestRecord]] = {}
 PARTICIPANT_AUDIT_EVENTS: dict[str, list[AuditEventRead]] = {}
+FILE_EVIDENCE: dict[str, list[FileEvidenceRecord]] = {}
 MUTATION_PACKAGES: dict[str, MutationPackageRead] = {}
 PACKAGED_MUTATION_REQUEST_IDS: set[str] = set()
+
+FILE_EVIDENCE_PURPOSES = {
+    ("mutation_review_supporting_document", "mutation_review"): {
+        "access_protection": "mutation_review_owner_and_leg_admin",
+        "retention_status": "retained_for_mutation_review",
+    },
+}
 
 
 def _document_hash(document: DocumentVersionCreate) -> str:
@@ -279,6 +332,20 @@ def _verified_participant(user: CurrentUser) -> ParticipantRecord:
         raise HTTPException(status_code=403, detail="Email verification required")
 
     return participant
+
+
+def _queue_email_event(event_type: str, recipient_email: str) -> CommunicationEventRead:
+    event = CommunicationEventRead(
+        id=uuid4().hex,
+        channel="email",
+        event_type=event_type,
+        recipient_email=recipient_email,
+        status="queued",
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    COMMUNICATION_EVENTS.append(event)
+
+    return event
 
 
 def _participant_membership_read(
@@ -373,6 +440,32 @@ def _find_mutation_request(mutation_request_id: str) -> MutationRequestRecord:
                 return mutation_request
 
     raise HTTPException(status_code=404, detail="Mutation request not found")
+
+
+def _find_file_evidence(
+    mutation_request_id: str,
+    file_evidence_id: str,
+) -> FileEvidenceRecord:
+    for evidence in FILE_EVIDENCE.get(mutation_request_id, []):
+        if evidence.id == file_evidence_id:
+            return evidence
+
+    raise HTTPException(status_code=404, detail="File evidence not found")
+
+
+def _authorize_file_evidence_access(
+    evidence: FileEvidenceRecord,
+    user: CurrentUser,
+) -> None:
+    if user.role == Role.LEG_ADMIN:
+        return
+
+    if user.role == Role.PARTICIPANT:
+        participant = _verified_participant(user)
+        if participant.id == evidence.participant_id:
+            return
+
+    raise HTTPException(status_code=403, detail="File evidence is not accessible")
 
 
 def _find_mutation_package(package_id: str) -> MutationPackageRead:
@@ -563,6 +656,29 @@ def admin_participants(
     return ParticipantList(participants=[])
 
 
+@app.get(
+    "/api/admin/communication-events",
+    response_model=list[CommunicationEventRead],
+)
+def admin_communication_events(
+    recipient_email: str | None = None,
+    event_type: str | None = None,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> list[CommunicationEventRead]:
+    events = COMMUNICATION_EVENTS
+
+    if recipient_email is not None:
+        events = [
+            event
+            for event in events
+            if event.recipient_email == recipient_email
+        ]
+    if event_type is not None:
+        events = [event for event in events if event.event_type == event_type]
+
+    return events
+
+
 @app.post(
     "/api/admin/participant-invitations",
     response_model=ParticipantInvitationRead,
@@ -580,6 +696,7 @@ def create_participant_invitation(
         status="pending_email_verification",
     )
     INVITATIONS[record.token] = record
+    _queue_email_event("participant_invitation", record.email)
 
     return ParticipantInvitationRead(
         token=record.token,
@@ -678,6 +795,77 @@ def review_mutation_request(
     )
 
     return _admin_mutation_request_read(mutation_request)
+
+
+@app.post(
+    "/api/admin/mutation-requests/{mutation_request_id}/file-evidence",
+    response_model=FileEvidenceMetadataRead,
+    status_code=201,
+)
+def attach_mutation_request_file_evidence(
+    mutation_request_id: str,
+    evidence: FileEvidenceCreate,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN)),
+) -> FileEvidenceMetadataRead:
+    mutation_request = _find_mutation_request(mutation_request_id)
+    evidence_config = FILE_EVIDENCE_PURPOSES.get(
+        (evidence.document_type, evidence.purpose),
+    )
+    if evidence_config is None:
+        raise HTTPException(
+            status_code=400,
+            detail="File evidence document type and purpose are not configured",
+        )
+
+    content = b64decode(evidence.content_base64)
+    record = FileEvidenceRecord(
+        id=uuid4().hex,
+        mutation_request_id=mutation_request.id,
+        participant_id=mutation_request.participant_id,
+        document_type=evidence.document_type,
+        purpose=evidence.purpose,
+        version=evidence.version,
+        filename=evidence.filename,
+        content_type=evidence.content_type,
+        sha256_hash=sha256(content).hexdigest(),
+        access_protection=evidence_config["access_protection"],
+        retention_status=evidence_config["retention_status"],
+        created_at=datetime.now(UTC).isoformat(),
+        content_base64=evidence.content_base64,
+    )
+    FILE_EVIDENCE.setdefault(mutation_request.id, []).append(record)
+
+    return FileEvidenceMetadataRead(**record.model_dump())
+
+
+@app.get(
+    "/api/mutation-requests/{mutation_request_id}/file-evidence/{file_evidence_id}",
+    response_model=FileEvidenceMetadataRead,
+)
+def file_evidence_metadata(
+    mutation_request_id: str,
+    file_evidence_id: str,
+    user: CurrentUser = Depends(current_user),
+) -> FileEvidenceMetadataRead:
+    evidence = _find_file_evidence(mutation_request_id, file_evidence_id)
+    _authorize_file_evidence_access(evidence, user)
+
+    return FileEvidenceMetadataRead(**evidence.model_dump())
+
+
+@app.get(
+    "/api/mutation-requests/{mutation_request_id}/file-evidence/{file_evidence_id}/content",
+    response_model=FileEvidenceContentRead,
+)
+def file_evidence_content(
+    mutation_request_id: str,
+    file_evidence_id: str,
+    user: CurrentUser = Depends(current_user),
+) -> FileEvidenceContentRead:
+    evidence = _find_file_evidence(mutation_request_id, file_evidence_id)
+    _authorize_file_evidence_access(evidence, user)
+
+    return FileEvidenceContentRead(**evidence.model_dump())
 
 
 @app.post(
@@ -982,6 +1170,7 @@ def accept_participant_invitation(token: str) -> InvitationAcceptResponse:
         email=participant.email,
         display_name=participant.display_name,
     )
+    _queue_email_event("email_verification", participant.email)
 
     return InvitationAcceptResponse(
         access_token=f"dev:participant:{participant_id}",
