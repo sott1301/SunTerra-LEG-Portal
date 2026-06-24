@@ -1,110 +1,62 @@
 import { type FormEvent, useEffect, useState } from "react";
 
+import type { components } from "./generated/api-types";
 import "./styles.css";
 
-type HealthStatus = {
-  status: string;
-  service: string;
-  version: string;
-};
+type ApiSchemas = components["schemas"];
 
-type Role = "participant" | "leg_admin" | "partner_admin" | "platform_admin";
+type HealthStatus = ApiSchemas["HealthStatus"];
+
+type Role = ApiSchemas["Role"];
 
 type PreferredContactChannel = "email" | "phone";
 
-type CurrentUser = {
-  id: string;
-  email: string;
-  display_name: string;
-  role: Role;
-};
+type CurrentUser = ApiSchemas["CurrentUser"];
 
-type ParticipantInvitation = {
-  token: string;
-  email: string;
-  display_name: string;
-  leg_id: "basadingen";
-  status: "pending_email_verification";
-};
+type LoginRequest = ApiSchemas["LoginRequest"];
 
-type InvitationAcceptResponse = {
-  access_token: string;
-  token_type: "bearer";
-  participant_id: string;
-  email_verification_required: boolean;
-};
+type ParticipantInvitation = ApiSchemas["ParticipantInvitationRead"];
 
-type EmailVerificationResponse = {
-  participant_id: string;
-  email_verified: boolean;
-};
+type ParticipantInvitationCreate = ApiSchemas["ParticipantInvitationCreate"];
 
-type IdentityCheckpoint = {
-  required_level: "email_verified";
-  current_level: "unverified" | "email_verified";
-  satisfied: boolean;
-};
+type InvitationAcceptResponse = ApiSchemas["InvitationAcceptResponse"];
 
-type SelfServiceOnboardingResponse = {
-  access_token: string;
-  token_type: "bearer";
-  participant_id: string;
-  participant_status: "pending_email_verification";
-  identity_checkpoint: IdentityCheckpoint;
-  dev_email_verification_token: string;
-};
+type EmailVerificationResponse = ApiSchemas["EmailVerificationResponse"];
 
-type ParticipantMembership = {
-  participant_id: string;
-  display_name: string;
-  email: string;
-  leg_id: "basadingen";
-  leg_name: string;
-  membership_status: "active";
-  billing_notice: string;
-};
+type IdentityCheckpoint = ApiSchemas["IdentityCheckpointRead"];
 
-type DocumentVersion = {
-  id: string;
-  document_key: "portal_terms";
-  title: string;
-  version: string;
-  document_hash: string;
-  context: "participant_onboarding";
-  published_at: string;
-};
+type SelfServiceOnboardingResponse = ApiSchemas["SelfServiceOnboardingResponse"];
 
-type CurrentDocument = DocumentVersion & {
-  content: string;
-};
+type SelfServiceOnboardingCreate = ApiSchemas["SelfServiceOnboardingCreate"];
 
-type ConsentEvidence = {
-  participant_id: string;
-  document_version_id: string;
-  document_key: "portal_terms";
-  version: string;
-  document_hash: string;
-  context: "participant_onboarding";
-  accepted_at: string;
-};
+type ParticipantAccountSetup = ApiSchemas["ParticipantAccountSetup"];
 
-type AuditEvent = {
-  id: string;
-  action: string;
-  actor_role: Role;
-  created_at: string;
-  from_status: string | null;
-  to_status: string | null;
-  reason: string | null;
-};
+type AuthTokenResponse = ApiSchemas["AuthTokenResponse"];
 
-type ParticipantContactChannels = {
-  participant_id: string;
-  email: string;
-  phone_number: string | null;
-  preferred_contact_channel: PreferredContactChannel;
-  audit_events: AuditEvent[];
-};
+type UserAccount = ApiSchemas["UserAccountRead"];
+
+type UserAccountCreate = ApiSchemas["UserAccountCreate"];
+
+type UserPasswordReset = ApiSchemas["UserPasswordReset"];
+
+type PartnerAdminUserCreate = ApiSchemas["PartnerAdminUserCreate"];
+
+type ParticipantMembership = ApiSchemas["ParticipantMembershipRead"];
+
+type DocumentVersion = ApiSchemas["DocumentVersionRead"];
+
+type DocumentVersionCreate = ApiSchemas["DocumentVersionCreate"];
+
+type CurrentDocument = ApiSchemas["CurrentDocumentRead"];
+
+type ConsentEvidenceCreate = ApiSchemas["ConsentEvidenceCreate"];
+
+type ConsentEvidence = ApiSchemas["ConsentEvidenceRead"];
+
+type ParticipantContactChannels = ApiSchemas["ParticipantContactChannelsRead"];
+
+type ParticipantContactChannelsUpdate =
+  ApiSchemas["ParticipantContactChannelsUpdate"];
 
 type MutationMode = "regular" | "special";
 
@@ -127,52 +79,17 @@ type MutationType = RegularMutationType | SpecialMutationType;
 
 type MutationDetails = Record<string, string | number>;
 
-type MutationRequest = {
-  id: string;
-  participant_id: string;
-  leg_id: "basadingen";
-  mutation_type: MutationType;
-  mode: MutationMode;
-  status: "submitted" | "approved" | "rejected";
-  quarter: string | null;
-  quarter_end: string | null;
-  participant_deadline: string | null;
-  effective_date: string;
-  submitted_at: string;
-  reviewed_at: string | null;
-  review_reason: string | null;
-  new_address: {
-    street: string;
-    postal_code: string;
-    city: string;
-    country: string;
-  } | null;
-  mutation_details: MutationDetails;
-  audit_events: AuditEvent[];
-};
+type MutationRequestCreate = ApiSchemas["MutationRequestCreate"];
 
-type AdminMutationRequest = MutationRequest & {
-  participant: {
-    participant_id: string;
-    display_name: string;
-    email: string;
-  };
-};
+type MutationRequest = ApiSchemas["ParticipantMutationRequestRead"];
 
-type FileEvidence = {
-  id: string;
-  mutation_request_id: string;
-  participant_id: string;
-  document_type: "mutation_review_supporting_document";
-  purpose: "mutation_review";
-  version: string;
-  filename: string;
-  content_type: string;
-  sha256_hash: string;
-  access_protection: string;
-  retention_status: string;
-  created_at: string;
-};
+type AdminMutationRequest = ApiSchemas["AdminMutationRequestRead"];
+
+type MutationReviewDecision = ApiSchemas["MutationReviewDecision"];
+
+type FileEvidence = ApiSchemas["FileEvidenceMetadataRead"];
+
+type FileEvidenceCreate = ApiSchemas["FileEvidenceCreate"];
 
 type FileEvidenceDraft = {
   version: string;
@@ -181,35 +98,9 @@ type FileEvidenceDraft = {
   content: string;
 };
 
-type MutationPackage = {
-  schema_version: "mutation-package.v1";
-  package_id: string;
-  leg_id: "basadingen";
-  quarter: string;
-  effective_date: string;
-  records: Array<{
-    mutation_request_id: string;
-    participant_id: string;
-    mutation_type: MutationType;
-    mode: "regular";
-    effective_date: string;
-    new_address: {
-      street: string;
-      postal_code: string;
-      city: string;
-      country: string;
-    } | null;
-    mutation_details: MutationDetails;
-  }>;
-  hash: string;
-  generated_at: string;
-  status_history: Array<{
-    status: "created";
-    actor_id: string;
-    actor_role: Role;
-    created_at: string;
-  }>;
-};
+type MutationPackageCreate = ApiSchemas["MutationPackageCreate"];
+
+type MutationPackage = ApiSchemas["MutationPackageRead"];
 
 type PartnerPackageStatus =
   | "created"
@@ -221,57 +112,19 @@ type PartnerPackageStatus =
 
 type PartnerPackageStatusUpdate = Exclude<PartnerPackageStatus, "created">;
 
-type PartnerMutationPackageSummary = {
-  package_id: string;
-  leg_id: "basadingen";
-  quarter: string;
-  effective_date: string;
-  generated_at: string;
-  record_count: number;
-  current_status: PartnerPackageStatus;
-  status_updated_at: string;
-};
+type MutationPackageStatusUpdate = ApiSchemas["MutationPackageStatusUpdate"];
 
-type PartnerMutationPackageStatusEvent = {
-  status: PartnerPackageStatus;
-  actor_role: Role;
-  created_at: string;
-  reference: string | null;
-  reason: string | null;
-};
+type PartnerMutationPackageSummary =
+  ApiSchemas["PartnerMutationPackageSummary"];
 
-type PartnerMutationPackageDetail = PartnerMutationPackageSummary & {
-  records: MutationPackage["records"];
-  status_history: PartnerMutationPackageStatusEvent[];
-};
+type PartnerMutationPackageDetail = ApiSchemas["PartnerMutationPackageDetail"];
 
-type PartnerMutationPackageStatusRead = {
-  package_id: string;
-  current_status: PartnerPackageStatus;
-  status_history: PartnerMutationPackageStatusEvent[];
-};
+type PartnerMutationPackageStatusRead =
+  ApiSchemas["PartnerMutationPackageStatusRead"];
 
-type PartnerMemberRegister = {
-  leg_id: "basadingen";
-  leg_name: string;
-  members: Array<{
-    participant_id: string;
-    display_name: string;
-    membership_status: string;
-    reporting_address: {
-      street: string;
-      postal_code: string;
-      city: string;
-      country: string;
-    } | null;
-    latest_package_status: {
-      package_id: string;
-      quarter: string;
-      effective_date: string;
-      status: PartnerPackageStatus;
-    };
-  }>;
-};
+type PartnerMemberRegister = ApiSchemas["PartnerMemberRegisterRead"];
+
+type PartnerTask = ApiSchemas["PartnerTaskRead"];
 
 type PartnerStatusDraft = {
   status: PartnerPackageStatusUpdate;
@@ -291,26 +144,27 @@ const demoRoles: Array<{ role: Role; label: string; workspaceTitle: string }> = 
   {
     role: "participant",
     label: "Teilnehmer",
-    workspaceTitle: "Mein Mitgliederbereich",
+    workspaceTitle: "Mein Portal",
   },
   {
     role: "leg_admin",
     label: "LEG Admin",
-    workspaceTitle: "LEG Verwaltung",
+    workspaceTitle: "LEG-Verwaltung",
   },
   {
     role: "partner_admin",
     label: "Gemeinde/EW",
-    workspaceTitle: "Gemeinde/EW Arbeitsplatz",
+    workspaceTitle: "Gemeinde/EW",
   },
   {
     role: "platform_admin",
-    label: "Plattform",
-    workspaceTitle: "Plattform Administration",
+    label: "Benutzerverwaltung",
+    workspaceTitle: "Benutzerverwaltung",
   },
 ];
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+const accessTokenStorageKey = "sunterra.accessToken";
 const devTokenStorageKey = "sunterra.devToken";
 const emptyFileEvidenceDraft: FileEvidenceDraft = {
   version: "",
@@ -349,6 +203,19 @@ const roleOptions = [
   { value: "prosumer", label: "Prosumer" },
 ];
 
+function normalizedPortalPath(pathname: string) {
+  return pathname === "/" ||
+    pathname === "/registrieren" ||
+    pathname === "/login" ||
+    pathname === "/app"
+    ? pathname
+    : "/";
+}
+
+function roleLabel(role: Role) {
+  return demoRoles.find((demoRole) => demoRole.role === role)?.label ?? role;
+}
+
 function textToBase64(value: string) {
   const bytes = new TextEncoder().encode(value);
   const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
@@ -356,7 +223,7 @@ function textToBase64(value: string) {
   return window.btoa(binary);
 }
 
-function mutationTypeLabel(mutationType: MutationType) {
+function mutationTypeLabel(mutationType: string) {
   return (
     regularMutationTypeOptions.find((option) => option.value === mutationType)
       ?.label ??
@@ -366,8 +233,21 @@ function mutationTypeLabel(mutationType: MutationType) {
   );
 }
 
+function partnerStatusLabel(status: string) {
+  const labels: Record<PartnerPackageStatus, string> = {
+    created: "Erstellt",
+    received: "Empfangen",
+    in_review: "In Prüfung",
+    processed: "Verarbeitet",
+    question: "Rückfrage",
+    technically_not_possible: "Technisch nicht möglich",
+  };
+
+  return status in labels ? labels[status as PartnerPackageStatus] : status;
+}
+
 function isSpecialMutationType(
-  mutationType: MutationType,
+  mutationType: string,
 ): mutationType is SpecialMutationType {
   return specialMutationTypeOptions.some((option) => option.value === mutationType);
 }
@@ -379,16 +259,20 @@ function requestedRoleLabel(value: string | number | undefined) {
   );
 }
 
-function addressLine(address: MutationRequest["new_address"]) {
+function addressLine(address: ApiSchemas["AddressRead"] | null | undefined) {
   return address
     ? `${address.street}, ${address.postal_code} ${address.city}, ${address.country}`
     : "Keine Adresse";
 }
 
+function preferredContactChannelFromApi(value: string): PreferredContactChannel {
+  return value === "phone" ? "phone" : "email";
+}
+
 function mutationDetailLines(
-  mutationType: MutationType,
+  mutationType: string,
   details: MutationDetails,
-  newAddress: MutationRequest["new_address"],
+  newAddress: ApiSchemas["AddressRead"] | null | undefined,
 ) {
   if (isSpecialMutationType(mutationType)) {
     return [
@@ -420,6 +304,12 @@ function mutationDetailLines(
 export function App() {
   const [backend, setBackend] = useState<BackendState>({ kind: "checking" });
   const [session, setSession] = useState<SessionState>({ kind: "anonymous" });
+  const [routePath, setRoutePath] = useState(() =>
+    normalizedPortalPath(window.location.pathname),
+  );
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteDisplayName, setInviteDisplayName] = useState("");
   const [participantInvitation, setParticipantInvitation] =
@@ -429,6 +319,9 @@ export function App() {
   const [selfServiceDisplayName, setSelfServiceDisplayName] = useState("");
   const [selfServiceOnboarding, setSelfServiceOnboarding] =
     useState<SelfServiceOnboardingResponse | null>(null);
+  const [participantSetupDisplayName, setParticipantSetupDisplayName] =
+    useState("");
+  const [participantSetupPassword, setParticipantSetupPassword] = useState("");
   const [identityCheckpoint, setIdentityCheckpoint] =
     useState<IdentityCheckpoint | null>(null);
   const [emailVerification, setEmailVerification] =
@@ -501,6 +394,28 @@ export function App() {
     useState<PartnerMemberRegister | null>(null);
   const [partnerMemberRegisterError, setPartnerMemberRegisterError] =
     useState("");
+  const [partnerTasks, setPartnerTasks] = useState<PartnerTask[]>([]);
+  const [partnerTaskError, setPartnerTaskError] = useState("");
+  const [userAccounts, setUserAccounts] = useState<UserAccount[]>([]);
+  const [userManagementError, setUserManagementError] = useState("");
+  const [createdUserAccount, setCreatedUserAccount] =
+    useState<UserAccount | null>(null);
+  const [updatedUserAccountId, setUpdatedUserAccountId] = useState("");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserDisplayName, setNewUserDisplayName] = useState("");
+  const [newUserRole, setNewUserRole] = useState<Role>("leg_admin");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [passwordResetUserId, setPasswordResetUserId] = useState("");
+  const [passwordResetValue, setPasswordResetValue] = useState("");
+  const [passwordResetResult, setPasswordResetResult] =
+    useState<UserAccount | null>(null);
+  const [partnerAdminEmail, setPartnerAdminEmail] = useState("");
+  const [partnerAdminDisplayName, setPartnerAdminDisplayName] = useState("");
+  const [partnerAdminOrganization, setPartnerAdminOrganization] = useState("");
+  const [partnerAdminPassword, setPartnerAdminPassword] = useState("");
+  const [createdPartnerAdmin, setCreatedPartnerAdmin] =
+    useState<UserAccount | null>(null);
+  const [partnerAdminError, setPartnerAdminError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -527,14 +442,44 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    function syncRoute() {
+      setRoutePath(normalizedPortalPath(window.location.pathname));
+    }
+
+    window.addEventListener("popstate", syncRoute);
+
+    return () => {
+      window.removeEventListener("popstate", syncRoute);
+    };
+  }, []);
+
+  useEffect(() => {
+    const storedToken =
+      window.localStorage.getItem(accessTokenStorageKey) ??
+      window.localStorage.getItem(devTokenStorageKey);
+
+    if (storedToken) {
+      void loadCurrentUser(storedToken);
+    }
+  }, []);
+
+  function navigate(path: string) {
+    const normalizedPath = normalizedPortalPath(path);
+    window.history.pushState({}, "", normalizedPath);
+    setRoutePath(normalizedPath);
+  }
+
   async function loadCurrentUser(token: string) {
     const response = await fetch(`${apiBaseUrl}/api/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
     if (!response.ok) {
+      window.localStorage.removeItem(accessTokenStorageKey);
       window.localStorage.removeItem(devTokenStorageKey);
       setSession({ kind: "anonymous" });
+      setParticipantMembership(null);
       return;
     }
 
@@ -543,6 +488,9 @@ export function App() {
     if (user.role === "participant") {
       void loadCurrentDocument(token);
       void loadContactChannels(token);
+      void loadParticipantMembership(token);
+    } else {
+      setParticipantMembership(null);
     }
     if (user.role === "leg_admin") {
       void loadAdminMutationRequests(token);
@@ -552,17 +500,67 @@ export function App() {
     if (user.role === "partner_admin") {
       void loadPartnerMutationPackages(token);
       void loadPartnerMemberRegister(token);
+      void loadPartnerTasks(token);
     } else {
       setPartnerPackages([]);
       setPartnerPackageDetails({});
       setPartnerMemberRegister(null);
+      setPartnerTasks([]);
+    }
+    if (user.role === "platform_admin") {
+      void loadUserAccounts(token);
+    } else {
+      setUserAccounts([]);
     }
   }
 
   function loginAs(role: Role) {
     const token = `dev:${role}`;
+    window.localStorage.setItem(accessTokenStorageKey, token);
     window.localStorage.setItem(devTokenStorageKey, token);
     void loadCurrentUser(token);
+    navigate("/app");
+  }
+
+  async function loginWithPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoginError("");
+
+    const loginRequest: LoginRequest = {
+      email: loginEmail,
+      password: loginPassword,
+    };
+    const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(loginRequest),
+    });
+
+    if (!response.ok) {
+      setLoginError("Login fehlgeschlagen");
+      return;
+    }
+
+    const auth = (await response.json()) as AuthTokenResponse;
+    window.localStorage.setItem(accessTokenStorageKey, auth.access_token);
+    window.localStorage.removeItem(devTokenStorageKey);
+    setSession({
+      kind: "authenticated",
+      token: auth.access_token,
+      user: auth.user,
+    });
+    void loadCurrentUser(auth.access_token);
+    navigate("/app");
+  }
+
+  function logout() {
+    window.localStorage.removeItem(accessTokenStorageKey);
+    window.localStorage.removeItem(devTokenStorageKey);
+    setSession({ kind: "anonymous" });
+    setParticipantMembership(null);
+    navigate("/");
   }
 
   async function createParticipantInvitation(event: FormEvent<HTMLFormElement>) {
@@ -572,6 +570,10 @@ export function App() {
       return;
     }
 
+    const invitationCreate: ParticipantInvitationCreate = {
+      email: inviteEmail,
+      display_name: inviteDisplayName,
+    };
     const response = await fetch(
       `${apiBaseUrl}/api/admin/participant-invitations`,
       {
@@ -580,10 +582,7 @@ export function App() {
           Authorization: `Bearer ${session.token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          email: inviteEmail,
-          display_name: inviteDisplayName,
-        }),
+        body: JSON.stringify(invitationCreate),
       },
     );
 
@@ -596,6 +595,9 @@ export function App() {
   async function startSelfServiceOnboarding(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    const onboardingCreate: SelfServiceOnboardingCreate = {
+      email: selfServiceEmail,
+    };
     const response = await fetch(
       `${apiBaseUrl}/api/auth/self-service-onboarding-requests`,
       {
@@ -603,10 +605,7 @@ export function App() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          email: selfServiceEmail,
-          display_name: selfServiceDisplayName,
-        }),
+        body: JSON.stringify(onboardingCreate),
       },
     );
 
@@ -615,6 +614,8 @@ export function App() {
         (await response.json()) as SelfServiceOnboardingResponse;
       setSelfServiceOnboarding(onboarding);
       setIdentityCheckpoint(onboarding.identity_checkpoint);
+      setParticipantSetupDisplayName("");
+      setParticipantSetupPassword("");
     }
   }
 
@@ -657,33 +658,46 @@ export function App() {
       setIdentityCheckpoint(checkpoint);
     }
 
-    const membershipResponse = await fetch(
-      `${apiBaseUrl}/api/participants/me/membership`,
+  }
+
+  async function completeParticipantAccountSetup(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+
+    if (selfServiceOnboarding === null) {
+      return;
+    }
+
+    const accountSetup: ParticipantAccountSetup = {
+      display_name: participantSetupDisplayName,
+      password: participantSetupPassword,
+    };
+    const response = await fetch(
+      `${apiBaseUrl}/api/auth/participant-account-setup`,
       {
+        method: "POST",
         headers: {
           Authorization: `Bearer ${selfServiceOnboarding.access_token}`,
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify(accountSetup),
       },
     );
-    const membership =
-      (await membershipResponse.json()) as Partial<ParticipantMembership>;
 
-    if (membership.membership_status) {
-      const participantMembership = membership as ParticipantMembership;
-      setParticipantMembership(participantMembership);
-      setSession({
-        kind: "authenticated",
-        token: selfServiceOnboarding.access_token,
-        user: {
-          id: participantMembership.participant_id,
-          email: participantMembership.email,
-          display_name: participantMembership.display_name,
-          role: "participant",
-        },
-      });
-      void loadCurrentDocument(selfServiceOnboarding.access_token);
-      void loadContactChannels(selfServiceOnboarding.access_token);
+    if (!response.ok) {
+      return;
     }
+
+    const auth = (await response.json()) as AuthTokenResponse;
+    window.localStorage.setItem(accessTokenStorageKey, auth.access_token);
+    setSession({
+      kind: "authenticated",
+      token: auth.access_token,
+      user: auth.user,
+    });
+    void loadCurrentUser(auth.access_token);
+    navigate("/app");
   }
 
   async function publishDocumentVersion(event: FormEvent<HTMLFormElement>) {
@@ -693,24 +707,41 @@ export function App() {
       return;
     }
 
+    const documentVersionCreate: DocumentVersionCreate = {
+      document_key: "portal_terms",
+      title: documentTitle,
+      version: documentVersion,
+      content: documentContent,
+      context: "participant_onboarding",
+    };
     const response = await fetch(`${apiBaseUrl}/api/admin/document-versions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${session.token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        document_key: "portal_terms",
-        title: documentTitle,
-        version: documentVersion,
-        content: documentContent,
-        context: "participant_onboarding",
-      }),
+      body: JSON.stringify(documentVersionCreate),
     });
 
     if (response.ok) {
       const published = (await response.json()) as DocumentVersion;
       setPublishedDocumentVersion(published);
+    }
+  }
+
+  async function loadParticipantMembership(token: string) {
+    const response = await fetch(`${apiBaseUrl}/api/participants/me/membership`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.ok) {
+      const membership =
+        (await response.json()) as Partial<ParticipantMembership>;
+      if (membership.membership_status) {
+        setParticipantMembership(membership as ParticipantMembership);
+      }
     }
   }
 
@@ -754,7 +785,9 @@ export function App() {
       const channels = (await response.json()) as ParticipantContactChannels;
       setContactChannels(channels);
       setPhoneNumber(channels.phone_number ?? "");
-      setPreferredContactChannel(channels.preferred_contact_channel);
+      setPreferredContactChannel(
+        preferredContactChannelFromApi(channels.preferred_contact_channel),
+      );
     }
   }
 
@@ -810,7 +843,188 @@ export function App() {
     setPartnerMemberRegisterError("Mitgliederregister konnte nicht geladen werden");
   }
 
-  function contactChannelLabel(channel: PreferredContactChannel) {
+  async function loadPartnerTasks(token: string) {
+    setPartnerTaskError("");
+    const response = await fetch(`${apiBaseUrl}/api/partner/tasks`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.ok) {
+      const tasks = (await response.json()) as PartnerTask[];
+      setPartnerTasks(tasks);
+      return;
+    }
+
+    setPartnerTaskError("Partner-Aufgaben konnten nicht geladen werden");
+  }
+
+  async function loadUserAccounts(token: string) {
+    setUserManagementError("");
+    const response = await fetch(`${apiBaseUrl}/api/admin/users`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.ok) {
+      const accounts = (await response.json()) as UserAccount[];
+      setUserAccounts(Array.isArray(accounts) ? accounts : []);
+      return;
+    }
+
+    setUserManagementError("Benutzerkonten konnten nicht geladen werden");
+  }
+
+  async function createPlatformUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setUserManagementError("");
+    const userCreate: UserAccountCreate = {
+      email: newUserEmail,
+      display_name: newUserDisplayName,
+      role: newUserRole,
+      password: newUserPassword,
+    };
+    const response = await fetch(`${apiBaseUrl}/api/admin/users`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(userCreate),
+    });
+
+    if (response.ok) {
+      const account = (await response.json()) as UserAccount;
+      setCreatedUserAccount(account);
+      setNewUserEmail("");
+      setNewUserDisplayName("");
+      setNewUserPassword("");
+      await loadUserAccounts(session.token);
+      return;
+    }
+
+    setUserManagementError("Benutzerkonto konnte nicht erstellt werden");
+  }
+
+  async function updateUserAccount(
+    userId: string,
+    update: ApiSchemas["UserAccountUpdate"],
+  ): Promise<UserAccount | null> {
+    if (session.kind !== "authenticated") {
+      return null;
+    }
+
+    setUserManagementError("");
+    const response = await fetch(`${apiBaseUrl}/api/admin/users/${userId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(update),
+    });
+
+    if (response.ok) {
+      const account = (await response.json()) as UserAccount;
+      setUserAccounts((current) =>
+        current.map((existing) => (existing.id === account.id ? account : existing)),
+      );
+      return account;
+    }
+
+    setUserManagementError("Benutzerkonto konnte nicht aktualisiert werden");
+    return null;
+  }
+
+  async function updateUserAccountDetails(
+    event: FormEvent<HTMLFormElement>,
+    userId: string,
+  ) {
+    event.preventDefault();
+
+    const formData = new FormData(event.currentTarget);
+    const updated = await updateUserAccount(userId, {
+      display_name: String(formData.get("display_name") ?? "").trim(),
+      role: formData.get("role") as Role,
+    });
+
+    if (updated !== null) {
+      setUpdatedUserAccountId(updated.id);
+    }
+  }
+
+  async function resetUserPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    const passwordReset: UserPasswordReset = { password: passwordResetValue };
+    const response = await fetch(
+      `${apiBaseUrl}/api/admin/users/${passwordResetUserId}/reset-password`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(passwordReset),
+      },
+    );
+
+    if (response.ok) {
+      const account = (await response.json()) as UserAccount;
+      setPasswordResetResult(account);
+      setPasswordResetValue("");
+      await loadUserAccounts(session.token);
+    }
+  }
+
+  async function createPartnerAdminUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setPartnerAdminError("");
+    const partnerAdminCreate: PartnerAdminUserCreate = {
+      email: partnerAdminEmail,
+      display_name: partnerAdminDisplayName,
+      organization: partnerAdminOrganization,
+      password: partnerAdminPassword,
+    };
+    const response = await fetch(`${apiBaseUrl}/api/admin/partner-admin-users`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(partnerAdminCreate),
+    });
+
+    if (response.ok) {
+      const account = (await response.json()) as UserAccount;
+      setCreatedPartnerAdmin(account);
+      setPartnerAdminEmail("");
+      setPartnerAdminDisplayName("");
+      setPartnerAdminOrganization("");
+      setPartnerAdminPassword("");
+      return;
+    }
+
+    setPartnerAdminError("Gemeinde/EW-Zugang konnte nicht erstellt werden");
+  }
+
+  function contactChannelLabel(channel: string) {
     return channel === "phone" ? "Telefon" : "E-Mail";
   }
 
@@ -823,23 +1037,26 @@ export function App() {
 
     setContactChannelSaved(false);
     setContactChannelError("");
+    const contactChannelsUpdate: ParticipantContactChannelsUpdate = {
+      phone_number: phoneNumber.trim() || null,
+      preferred_contact_channel: preferredContactChannel,
+    };
     const response = await fetch(`${apiBaseUrl}/api/participants/me/contact-channels`, {
       method: "PATCH",
       headers: {
         Authorization: `Bearer ${session.token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        phone_number: phoneNumber.trim() || null,
-        preferred_contact_channel: preferredContactChannel,
-      }),
+      body: JSON.stringify(contactChannelsUpdate),
     });
 
     if (response.ok) {
       const channels = (await response.json()) as ParticipantContactChannels;
       setContactChannels(channels);
       setPhoneNumber(channels.phone_number ?? "");
-      setPreferredContactChannel(channels.preferred_contact_channel);
+      setPreferredContactChannel(
+        preferredContactChannelFromApi(channels.preferred_contact_channel),
+      );
       setContactChannelSaved(true);
       return;
     }
@@ -861,6 +1078,13 @@ export function App() {
     }
 
     setAdminMutationError("");
+    const reviewDecision: MutationReviewDecision =
+      decision === "rejected"
+        ? {
+            decision,
+            reason: reviewReasons[mutationRequestId] ?? "",
+          }
+        : { decision };
     const response = await fetch(
       `${apiBaseUrl}/api/admin/mutation-requests/${mutationRequestId}/review-decision`,
       {
@@ -869,14 +1093,7 @@ export function App() {
           Authorization: `Bearer ${session.token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(
-          decision === "rejected"
-            ? {
-                decision,
-                reason: reviewReasons[mutationRequestId] ?? "",
-              }
-            : { decision },
-        ),
+        body: JSON.stringify(reviewDecision),
       },
     );
 
@@ -922,6 +1139,14 @@ export function App() {
 
     const draft = fileEvidenceDrafts[mutationRequestId] ?? emptyFileEvidenceDraft;
     setAdminMutationError("");
+    const fileEvidenceCreate: FileEvidenceCreate = {
+      document_type: "mutation_review_supporting_document",
+      purpose: "mutation_review",
+      version: draft.version,
+      filename: draft.filename,
+      content_type: draft.contentType,
+      content_base64: textToBase64(draft.content),
+    };
     const response = await fetch(
       `${apiBaseUrl}/api/admin/mutation-requests/${mutationRequestId}/file-evidence`,
       {
@@ -930,14 +1155,7 @@ export function App() {
           Authorization: `Bearer ${session.token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          document_type: "mutation_review_supporting_document",
-          purpose: "mutation_review",
-          version: draft.version,
-          filename: draft.filename,
-          content_type: draft.contentType,
-          content_base64: textToBase64(draft.content),
-        }),
+        body: JSON.stringify(fileEvidenceCreate),
       },
     );
 
@@ -975,15 +1193,16 @@ export function App() {
     }
 
     setMutationPackageError("");
+    const packageCreate: MutationPackageCreate = {
+      quarter: packageQuarter,
+    };
     const response = await fetch(`${apiBaseUrl}/api/admin/mutation-packages`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${session.token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        quarter: packageQuarter,
-      }),
+      body: JSON.stringify(packageCreate),
     });
 
     if (response.ok) {
@@ -1079,6 +1298,10 @@ export function App() {
     };
     const reference = draft.reference.trim();
     setPartnerPackageError("");
+    const statusUpdate: MutationPackageStatusUpdate = {
+      status: draft.status,
+      ...(reference ? { reference } : {}),
+    };
     const response = await fetch(
       `${apiBaseUrl}/api/partner/mutation-packages/${packageId}/status`,
       {
@@ -1087,10 +1310,7 @@ export function App() {
           Authorization: `Bearer ${session.token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          status: draft.status,
-          ...(reference ? { reference } : {}),
-        }),
+        body: JSON.stringify(statusUpdate),
       },
     );
 
@@ -1127,6 +1347,7 @@ export function App() {
           },
         };
       });
+      await loadPartnerTasks(session.token);
       return;
     }
 
@@ -1147,17 +1368,18 @@ export function App() {
       return;
     }
 
+    const consentEvidenceCreate: ConsentEvidenceCreate = {
+      document_version_id: currentDocument.id,
+      context: "participant_onboarding",
+      accepted: true,
+    };
     const response = await fetch(`${apiBaseUrl}/api/participants/me/consent-evidence`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${session.token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        document_version_id: currentDocument.id,
-        context: "participant_onboarding",
-        accepted: true,
-      }),
+      body: JSON.stringify(consentEvidenceCreate),
     });
 
     if (response.ok) {
@@ -1173,7 +1395,7 @@ export function App() {
       return;
     }
 
-    const mutationPayload: Record<string, unknown> = {
+    const mutationPayload: MutationRequestCreate = {
       mutation_type: mutationType,
       mode: mutationMode,
     };
@@ -1275,6 +1497,7 @@ export function App() {
 
     if (membership.membership_status) {
       const participantMembership = membership as ParticipantMembership;
+      window.localStorage.setItem(accessTokenStorageKey, acceptance.access_token);
       setParticipantMembership(participantMembership);
       setSession({
         kind: "authenticated",
@@ -1288,6 +1511,7 @@ export function App() {
       });
       void loadCurrentDocument(acceptance.access_token);
       void loadContactChannels(acceptance.access_token);
+      navigate("/app");
     }
   }
 
@@ -1295,6 +1519,277 @@ export function App() {
     session.kind === "authenticated"
       ? demoRoles.find((demoRole) => demoRole.role === session.user.role)
       : undefined;
+  const canSetupSelfServiceAccount =
+    selfServiceOnboarding !== null &&
+    emailVerification?.email_verified === true &&
+    identityCheckpoint?.required_level === "account_setup" &&
+    identityCheckpoint.current_level === "email_verified";
+
+  const documentVersionForm = (
+    <form
+      className="invitation-form document-version-form"
+      onSubmit={publishDocumentVersion}
+    >
+      <h3>Dokumentverwaltung</h3>
+      <label>
+        Titel
+        <input
+          type="text"
+          value={documentTitle}
+          onChange={(event) => setDocumentTitle(event.target.value)}
+          required
+        />
+      </label>
+      <label>
+        Version
+        <input
+          type="text"
+          value={documentVersion}
+          onChange={(event) => setDocumentVersion(event.target.value)}
+          required
+        />
+      </label>
+      <label>
+        Inhalt
+        <textarea
+          value={documentContent}
+          onChange={(event) => setDocumentContent(event.target.value)}
+          required
+        />
+      </label>
+      <button type="submit">Dokumentversion veroeffentlichen</button>
+      {publishedDocumentVersion ? (
+        <div className="invitation-result" role="status">
+          <p>Dokumentversion veroeffentlicht</p>
+          <p>{publishedDocumentVersion.version}</p>
+          <p>{publishedDocumentVersion.document_hash}</p>
+        </div>
+      ) : null}
+    </form>
+  );
+
+  const partnerAdminUserForm = (
+    <form className="invitation-form" onSubmit={createPartnerAdminUser}>
+      <h3>Gemeinde/EW Zugang erstellen</h3>
+      <p>
+        Warnung: Dieser Zugang erhaelt Zugriff auf Gemeinde/EW-Aufgaben,
+        Mutationspakete und rollenbezogene Mitgliederdaten der LEG.
+      </p>
+      <label>
+        Gemeinde/EW E-Mail
+        <input
+          type="email"
+          value={partnerAdminEmail}
+          onChange={(event) => setPartnerAdminEmail(event.target.value)}
+          required
+        />
+      </label>
+      <label>
+        Gemeinde/EW Anzeigename
+        <input
+          type="text"
+          value={partnerAdminDisplayName}
+          onChange={(event) => setPartnerAdminDisplayName(event.target.value)}
+          required
+        />
+      </label>
+      <label>
+        Organisation / Verantwortung
+        <input
+          type="text"
+          value={partnerAdminOrganization}
+          onChange={(event) => setPartnerAdminOrganization(event.target.value)}
+          required
+        />
+      </label>
+      <label>
+        Startpasswort
+        <input
+          type="password"
+          value={partnerAdminPassword}
+          onChange={(event) => setPartnerAdminPassword(event.target.value)}
+          required
+        />
+      </label>
+      <button type="submit">Gemeinde/EW Zugang erstellen</button>
+      {createdPartnerAdmin ? (
+        <div className="invitation-result" role="status">
+          <p>Gemeinde/EW Zugang erstellt</p>
+          <p>{createdPartnerAdmin.email}</p>
+        </div>
+      ) : null}
+      {partnerAdminError ? (
+        <div className="mutation-error" role="alert">
+          <p>{partnerAdminError}</p>
+        </div>
+      ) : null}
+    </form>
+  );
+
+  const userManagementPanel = (
+    <section className="user-management" aria-label="Benutzerverwaltung">
+      <form className="invitation-form" onSubmit={createPlatformUser}>
+        <h3>Internes Konto erstellen</h3>
+        <label>
+          E-Mail
+          <input
+            type="email"
+            value={newUserEmail}
+            onChange={(event) => setNewUserEmail(event.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Anzeigename
+          <input
+            type="text"
+            value={newUserDisplayName}
+            onChange={(event) => setNewUserDisplayName(event.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Rolle
+          <select
+            value={newUserRole}
+            onChange={(event) => setNewUserRole(event.target.value as Role)}
+          >
+            <option value="leg_admin">LEG Admin</option>
+            <option value="platform_admin">Plattform Admin</option>
+          </select>
+        </label>
+        <label>
+          Startpasswort
+          <input
+            type="password"
+            value={newUserPassword}
+            onChange={(event) => setNewUserPassword(event.target.value)}
+            required
+          />
+        </label>
+        <button type="submit">Benutzer erstellen</button>
+        {createdUserAccount ? (
+          <div className="invitation-result" role="status">
+            <p>Benutzer erstellt</p>
+            <p>{createdUserAccount.email}</p>
+          </div>
+        ) : null}
+      </form>
+
+      <div className="user-list">
+        <h3>Konten</h3>
+        {userAccounts.length > 0 ? (
+          userAccounts.map((account) => (
+            <article
+              aria-label={`Konto ${account.email}`}
+              className="user-row"
+              key={account.id}
+            >
+              <div>
+                <strong>{account.display_name}</strong>
+                <p>{account.email}</p>
+                <p>
+                  {roleLabel(account.role)} /{" "}
+                  {account.active ? "aktiv" : "deaktiviert"}
+                </p>
+                {account.organization ? <p>{account.organization}</p> : null}
+              </div>
+              <form
+                className="invitation-form"
+                onSubmit={(event) =>
+                  void updateUserAccountDetails(event, account.id)
+                }
+              >
+                <label>
+                  Anzeigename
+                  <input
+                    name="display_name"
+                    type="text"
+                    defaultValue={account.display_name}
+                    required
+                  />
+                </label>
+                <label>
+                  Rolle
+                  <select name="role" defaultValue={account.role}>
+                    <option value="leg_admin">LEG Admin</option>
+                    <option value="platform_admin">Plattform Admin</option>
+                  </select>
+                </label>
+                <button type="submit">Aenderungen speichern</button>
+                {updatedUserAccountId === account.id ? (
+                  <div className="invitation-result" role="status">
+                    <p>Benutzer aktualisiert</p>
+                  </div>
+                ) : null}
+              </form>
+              <div className="role-actions">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void updateUserAccount(account.id, {
+                      active: !account.active,
+                    })
+                  }
+                >
+                  {account.active ? "Deaktivieren" : "Aktivieren"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPasswordResetUserId(account.id)}
+                >
+                  Passwort resetten
+                </button>
+              </div>
+            </article>
+          ))
+        ) : (
+          <p>Keine Konten geladen</p>
+        )}
+      </div>
+
+      <form className="invitation-form" onSubmit={resetUserPassword}>
+        <h3>Startpasswort setzen</h3>
+        <label>
+          Konto
+          <select
+            value={passwordResetUserId}
+            onChange={(event) => setPasswordResetUserId(event.target.value)}
+            required
+          >
+            <option value="">Konto waehlen</option>
+            {userAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.display_name} ({account.email})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Neues Startpasswort
+          <input
+            type="password"
+            value={passwordResetValue}
+            onChange={(event) => setPasswordResetValue(event.target.value)}
+            required
+          />
+        </label>
+        <button type="submit">Passwort resetten</button>
+        {passwordResetResult ? (
+          <div className="invitation-result" role="status">
+            <p>Passwort zurueckgesetzt</p>
+            <p>{passwordResetResult.email}</p>
+          </div>
+        ) : null}
+      </form>
+
+      {userManagementError ? (
+        <div className="mutation-error" role="alert">
+          <p>{userManagementError}</p>
+        </div>
+      ) : null}
+    </section>
+  );
 
   const documentConsentForm = currentDocument ? (
     <form className="document-consent" onSubmit={submitConsentEvidence}>
@@ -1992,6 +2487,35 @@ export function App() {
     </section>
   );
 
+  const partnerTasksView = (
+    <section className="partner-tasks" aria-label="Partner-Aufgaben">
+      <h3>Partner-Aufgaben</h3>
+      {partnerTasks.length > 0 ? (
+        <div className="partner-task-list">
+          {partnerTasks.map((task) => (
+            <div className="partner-task-item" key={task.task_id}>
+              <p>Paket {task.package_id}</p>
+              <p>{partnerStatusLabel(task.status)}</p>
+              <p>{task.quarter}</p>
+              <p>Wirksam ab: {task.effective_date}</p>
+              <p>{task.record_count} Mutation</p>
+              {task.reference ? <p>{task.reference}</p> : null}
+              {task.reason ? <p>{task.reason}</p> : null}
+              <p>{task.created_at}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p>Keine Partner-Aufgaben</p>
+      )}
+      {partnerTaskError ? (
+        <div className="mutation-error" role="alert">
+          <p>{partnerTaskError}</p>
+        </div>
+      ) : null}
+    </section>
+  );
+
   const partnerMemberRegisterView = (
     <section className="partner-member-register" aria-label="Mitgliederregister">
       <h3>Mitgliederregister</h3>
@@ -2026,6 +2550,387 @@ export function App() {
       ) : null}
     </section>
   );
+
+  const statusPanel = (
+    <section className="status-panel" aria-label="Systemstatus">
+      <span
+        className={`status-dot status-dot--${backend.kind}`}
+        aria-hidden="true"
+      />
+      <div>
+        <p className="status-label">
+          {backend.kind === "connected"
+            ? "Backend verbunden"
+            : backend.kind === "offline"
+              ? "Backend nicht erreichbar"
+              : "Verbindung wird geprueft"}
+        </p>
+        {backend.kind === "connected" ? (
+          <p className="status-detail">
+            {backend.health.service} {backend.health.version}
+          </p>
+        ) : backend.kind === "offline" ? (
+          <p className="status-detail">Die Portaloberflaeche ist geladen.</p>
+        ) : null}
+      </div>
+    </section>
+  );
+
+  const loginScreen = (
+    <main className="portal-shell portal-shell--auth">
+      <nav className="portal-nav" aria-label="Portalbereiche">
+        <button type="button" onClick={() => navigate("/")}>
+          SunTerra LEG Portal
+        </button>
+        <button type="button" onClick={() => navigate("/registrieren")}>
+          Teilnahme starten
+        </button>
+      </nav>
+      <section className="auth-panel" aria-labelledby="login-title">
+        <p className="eyebrow">Gemeinsamer Zugang</p>
+        <h1 id="login-title">Einloggen</h1>
+        <p className="subtitle">
+          Ein Login fuer Teilnehmer, LEG-Verwaltung, Gemeinde/EW und
+          Benutzerverwaltung.
+        </p>
+        <form className="invitation-form" onSubmit={loginWithPassword}>
+          <label>
+            E-Mail
+            <input
+              type="email"
+              value={loginEmail}
+              onChange={(event) => setLoginEmail(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Passwort
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(event) => setLoginPassword(event.target.value)}
+              required
+            />
+          </label>
+          <button type="submit">Einloggen</button>
+          {loginError ? (
+            <div className="mutation-error" role="alert">
+              <p>{loginError}</p>
+            </div>
+          ) : null}
+        </form>
+        <section className="dev-login-panel" aria-label="Lokale Demo-Rollen">
+          <h2>Anmeldung erforderlich</h2>
+          <p>Fuer die lokale Entwicklung kann eine Demo-Rolle genutzt werden.</p>
+          <div className="role-actions" aria-label="Demo-Rollen">
+            {demoRoles.map((demoRole) => (
+              <button
+                key={demoRole.role}
+                type="button"
+                onClick={() => loginAs(demoRole.role)}
+              >
+                {demoRole.label}
+              </button>
+            ))}
+          </div>
+          {import.meta.env.DEV ? (
+            <form
+              className="invitation-form"
+              onSubmit={acceptParticipantInvitation}
+            >
+              <label>
+                Einladungstoken
+                <input
+                  type="text"
+                  value={onboardingToken}
+                  onChange={(event) => setOnboardingToken(event.target.value)}
+                  required
+                />
+              </label>
+              <button type="submit">Einladung annehmen und verifizieren</button>
+              {emailVerification ? (
+                <div className="invitation-result" role="status">
+                  <p>E-Mail verifiziert</p>
+                  <p>{emailVerification.participant_id}</p>
+                </div>
+              ) : null}
+            </form>
+          ) : null}
+        </section>
+      </section>
+      {statusPanel}
+    </main>
+  );
+
+  if (routePath === "/registrieren") {
+    return (
+      <main className="portal-shell portal-shell--auth">
+        <nav className="portal-nav" aria-label="Portalbereiche">
+          <button type="button" onClick={() => navigate("/")}>
+            SunTerra LEG Portal
+          </button>
+          <button type="button" onClick={() => navigate("/login")}>
+            Einloggen
+          </button>
+        </nav>
+        <section className="auth-panel" aria-labelledby="register-title">
+          <p className="eyebrow">Teilnahme</p>
+          <h1 id="register-title">Teilnahme starten</h1>
+          <p className="subtitle">
+            Starten Sie mit Ihrer E-Mail. Nach der Verifikation richten Sie Ihr
+            Konto mit Name und Passwort ein.
+          </p>
+          <form
+            className="invitation-form self-service-form"
+            onSubmit={startSelfServiceOnboarding}
+          >
+            <label>
+              Self-Service E-Mail
+              <input
+                type="email"
+                value={selfServiceEmail}
+                onChange={(event) => setSelfServiceEmail(event.target.value)}
+                required
+              />
+            </label>
+            <button type="submit">Self-Service starten</button>
+          </form>
+          {selfServiceOnboarding && identityCheckpoint ? (
+            <section
+              className="identity-checkpoint"
+              aria-label="Identitaetspruefung"
+            >
+              <h3>Identitaetspruefung</h3>
+              <p>Erforderlich: {identityCheckpoint.required_level}</p>
+              <p>Aktuell: {identityCheckpoint.current_level}</p>
+              <p>
+                {identityCheckpoint.satisfied
+                  ? "Checkpoint erfuellt"
+                  : "Checkpoint offen"}
+              </p>
+              <p>{selfServiceOnboarding.dev_email_verification_token}</p>
+              <button
+                type="button"
+                disabled={identityCheckpoint.satisfied}
+                onClick={() => void verifySelfServiceEmail()}
+              >
+                Dev E-Mail verifizieren
+              </button>
+            </section>
+          ) : null}
+          {canSetupSelfServiceAccount ? (
+            <form
+              className="invitation-form"
+              onSubmit={completeParticipantAccountSetup}
+            >
+              <h2>Konto einrichten</h2>
+              <label>
+                Anzeigename
+                <input
+                  type="text"
+                  value={participantSetupDisplayName}
+                  onChange={(event) =>
+                    setParticipantSetupDisplayName(event.target.value)
+                  }
+                  required
+                />
+              </label>
+              <label>
+                Passwort
+                <input
+                  type="password"
+                  value={participantSetupPassword}
+                  onChange={(event) =>
+                    setParticipantSetupPassword(event.target.value)
+                  }
+                  required
+                />
+              </label>
+              <button type="submit">Konto einrichten</button>
+            </form>
+          ) : null}
+        </section>
+        {statusPanel}
+      </main>
+    );
+  }
+
+  if (routePath === "/login") {
+    return loginScreen;
+  }
+
+  if (routePath === "/app") {
+    if (session.kind !== "authenticated") {
+      return loginScreen;
+    }
+
+    return (
+      <main className="portal-shell portal-shell--workspace">
+        <nav className="portal-nav" aria-label="Portalbereiche">
+          <button type="button" onClick={() => navigate("/")}>
+            SunTerra LEG Portal
+          </button>
+          <button type="button" onClick={logout}>
+            Abmelden
+          </button>
+        </nav>
+        {statusPanel}
+        <section
+          className="workspace-panel"
+          aria-label="Geschuetzter Arbeitsbereich"
+        >
+          {participantMembership ? (
+            <div className="membership-workspace">
+              <h2>Mein Portal</h2>
+              <p>{participantMembership.display_name}</p>
+              <dl className="membership-details">
+                <div>
+                  <dt>E-Mail</dt>
+                  <dd>{participantMembership.email}</dd>
+                </div>
+                <div>
+                  <dt>LEG</dt>
+                  <dd>{participantMembership.leg_name}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>Mitgliedschaft aktiv</dd>
+                </div>
+              </dl>
+              <p className="billing-notice">
+                {participantMembership.billing_notice}
+              </p>
+              {documentConsentForm}
+              {contactChannelForm}
+              {addressMutationForm}
+            </div>
+          ) : activeWorkspace ? (
+            <div className="role-workspace">
+              <header className="workspace-header">
+                <div>
+                  <p className="eyebrow">{roleLabel(session.user.role)}</p>
+                  <h2>{activeWorkspace.workspaceTitle}</h2>
+                  <p>{session.user.display_name}</p>
+                </div>
+              </header>
+              {session.user.role === "leg_admin" ? (
+                <>
+                  <form
+                    className="invitation-form"
+                    onSubmit={createParticipantInvitation}
+                  >
+                    <h3>Teilnehmer einladen</h3>
+                    <label>
+                      E-Mail
+                      <input
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(event) => setInviteEmail(event.target.value)}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Anzeigename
+                      <input
+                        type="text"
+                        value={inviteDisplayName}
+                        onChange={(event) =>
+                          setInviteDisplayName(event.target.value)
+                        }
+                        required
+                      />
+                    </label>
+                    <button type="submit">Einladung erstellen</button>
+                    {participantInvitation ? (
+                      <div className="invitation-result" role="status">
+                        <p>Einladung erstellt</p>
+                        <p>{participantInvitation.display_name}</p>
+                        <p>{participantInvitation.token}</p>
+                      </div>
+                    ) : null}
+                  </form>
+                  {partnerAdminUserForm}
+                  {documentVersionForm}
+                  {adminMutationInbox}
+                  {adminMutationPackages}
+                </>
+              ) : null}
+              {session.user.role === "partner_admin" ? (
+                <>
+                  {partnerTasksView}
+                  {partnerMemberRegisterView}
+                  {partnerPackageInbox}
+                </>
+              ) : null}
+              {session.user.role === "platform_admin" ? userManagementPanel : null}
+              {session.user.role === "participant" ? (
+                <>
+                  {documentConsentForm}
+                  {contactChannelForm}
+                  {addressMutationForm}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      </main>
+    );
+  }
+
+  if (routePath === "/") {
+    return (
+      <main className="portal-shell portal-shell--public">
+        <nav className="portal-nav" aria-label="Portalbereiche">
+          <button type="button" onClick={() => navigate("/")}>
+            SunTerra LEG Portal
+          </button>
+          <button type="button" onClick={() => navigate("/login")}>
+            Einloggen
+          </button>
+        </nav>
+        <section className="hero-band" aria-labelledby="portal-title">
+          <p className="eyebrow">SunTerra LEG Basadingen</p>
+          <h1 id="portal-title">SunTerra LEG Portal</h1>
+          <p className="subtitle">
+            Das Portal fuer lokale Energie, transparente Teilnahme und die
+            operative LEG-Verwaltung.
+          </p>
+          <div className="hero-actions">
+            <button type="button" onClick={() => navigate("/registrieren")}>
+              Teilnahme starten
+            </button>
+            <button type="button" onClick={() => navigate("/login")}>
+              Einloggen
+            </button>
+          </div>
+        </section>
+        <section className="public-overview" aria-label="Portaluebersicht">
+          <article>
+            <h2>Was ist eine LEG?</h2>
+            <p>
+              Eine lokale Elektrizitaetsgemeinschaft verbindet Verbrauch,
+              Produktion und Verwaltung in einem gemeinsamen digitalen Ablauf.
+            </p>
+          </article>
+          <article>
+            <h2>Wie funktioniert die Teilnahme?</h2>
+            <p>
+              Interessierte starten mit ihrer E-Mail, verifizieren den Zugang
+              und fuehren die weiteren Schritte im geschuetzten Portal fort.
+            </p>
+          </article>
+          <article>
+            <h2>Arbeitsbereiche</h2>
+            <p>
+              Mein Portal, LEG-Verwaltung, Gemeinde/EW und Benutzerverwaltung
+              fuehren direkt zu den relevanten Funktionen.
+            </p>
+          </article>
+        </section>
+        {statusPanel}
+      </main>
+    );
+  }
 
   return (
     <main className="portal-shell">
@@ -2135,6 +3040,7 @@ export function App() {
             ) : null}
             {session.user.role === "partner_admin" ? (
               <>
+                {partnerTasksView}
                 {partnerMemberRegisterView}
                 {partnerPackageInbox}
               </>

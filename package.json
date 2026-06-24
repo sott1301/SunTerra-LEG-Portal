@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "api:types": ".\\.venv\\Scripts\\python scripts/generate_api_types.py",
+    "api:types:check": ".\\.venv\\Scripts\\python scripts/check_api_types.py",
     "build": "tsc -b && vite build",
     "test": "vitest run"
   },

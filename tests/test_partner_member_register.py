@@ -174,7 +174,7 @@ def test_partner_member_register_redacts_private_internal_consent_file_and_actor
     assert contact_response.status_code == 200
     document = client.post(
         "/api/admin/document-versions",
-        headers={"Authorization": "Bearer dev:platform_admin"},
+        headers={"Authorization": "Bearer dev:leg_admin"},
         json={
             "document_key": "portal_terms",
             "title": "Portal Nutzungsbedingungen",
@@ -306,7 +306,7 @@ def test_partner_member_register_redacts_private_internal_consent_file_and_actor
     [
         "Bearer dev:participant",
         "Bearer dev:leg_admin",
-        "Bearer dev:platform_admin",
+        "Bearer dev:leg_admin",
     ],
 )
 def test_partner_member_register_denies_non_partner_roles(authorization: str) -> None:

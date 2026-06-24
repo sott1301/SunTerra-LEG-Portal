@@ -26,7 +26,8 @@ def test_public_user_can_start_self_service_onboarding_without_invitation() -> N
     payload = response.json()
     assert payload.pop("participant_id")
     assert payload.pop("dev_email_verification_token")
-    assert payload["access_token"].startswith("dev:participant:")
+    assert payload["access_token"].count(".") == 2
+    assert not payload["access_token"].startswith("dev:participant:")
     assert payload == {
         "access_token": payload["access_token"],
         "token_type": "bearer",
@@ -66,7 +67,7 @@ def test_unverified_self_service_participant_can_read_membership_checkpoint_but_
     }
 
 
-def test_email_verification_satisfies_self_service_checkpoint_and_reveals_membership() -> None:
+def test_email_verification_requires_account_setup_before_membership_access() -> None:
     client = TestClient(app)
     onboarding = start_self_service_onboarding(
         client,
@@ -83,7 +84,7 @@ def test_email_verification_satisfies_self_service_checkpoint_and_reveals_member
         "/api/participants/me/identity-checkpoint?action=membership_activation",
         headers={"Authorization": f"Bearer {onboarding['access_token']}"},
     )
-    membership_response = client.get(
+    membership_before_setup = client.get(
         "/api/participants/me/membership",
         headers={"Authorization": f"Bearer {onboarding['access_token']}"},
     )
@@ -96,12 +97,27 @@ def test_email_verification_satisfies_self_service_checkpoint_and_reveals_member
     assert checkpoint_response.status_code == 200
     assert checkpoint_response.json() == {
         "action": "membership_activation",
-        "required_level": "email_verified",
+        "required_level": "account_setup",
         "current_level": "email_verified",
-        "satisfied": True,
+        "satisfied": False,
     }
-    assert membership_response.status_code == 200
-    assert membership_response.json() == {
+    assert membership_before_setup.status_code == 403
+    assert membership_before_setup.json() == {"detail": "Account setup required"}
+
+    setup_response = client.post(
+        "/api/auth/participant-account-setup",
+        headers={"Authorization": f"Bearer {onboarding['access_token']}"},
+        json={"display_name": "Selina Frei", "password": "Start123!"},
+    )
+    assert setup_response.status_code == 200
+    setup_token = setup_response.json()["access_token"]
+    membership_after_setup = client.get(
+        "/api/participants/me/membership",
+        headers={"Authorization": f"Bearer {setup_token}"},
+    )
+
+    assert membership_after_setup.status_code == 200
+    assert membership_after_setup.json() == {
         "participant_id": onboarding["participant_id"],
         "display_name": "Selina Frei",
         "email": "checkpoint.verified@example.test",

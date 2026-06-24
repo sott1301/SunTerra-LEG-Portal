@@ -223,6 +223,141 @@ def test_partner_admin_can_set_supported_statuses(
     }
 
 
+def test_partner_admin_can_list_follow_up_tasks_for_question_status() -> None:
+    client = TestClient(app)
+    package = create_approved_package(
+        client,
+        email="partner-task-question@example.test",
+        quarter="2032-Q1",
+        submitted_on="2031-12-31",
+    )
+    status_response = client.post(
+        f"/api/partner/mutation-packages/{package['package_id']}/status",
+        headers=PARTNER_HEADERS,
+        json={"status": "question", "reference": "EW-RF-2032"},
+    )
+    assert status_response.status_code == 200
+
+    response = client.get("/api/partner/tasks", headers=PARTNER_HEADERS)
+
+    assert response.status_code == 200
+    tasks = [
+        task
+        for task in response.json()
+        if task["package_id"] == package["package_id"]
+    ]
+    assert tasks == [
+        {
+            "task_id": f"{package['package_id']}:question",
+            "package_id": package["package_id"],
+            "leg_id": "basadingen",
+            "quarter": "2032-Q1",
+            "effective_date": "2032-04-01",
+            "status": "question",
+            "reference": "EW-RF-2032",
+            "reason": None,
+            "created_at": status_response.json()["status_history"][-1]["created_at"],
+            "record_count": 1,
+        },
+    ]
+    assert "hash" not in tasks[0]
+    assert "records" not in tasks[0]
+    assert "actor_id" not in tasks[0]
+
+
+def test_later_package_status_supersedes_partner_follow_up_task() -> None:
+    client = TestClient(app)
+    package = create_approved_package(
+        client,
+        email="partner-task-superseded@example.test",
+        quarter="2032-Q2",
+        submitted_on="2032-03-31",
+    )
+    question_response = client.post(
+        f"/api/partner/mutation-packages/{package['package_id']}/status",
+        headers=PARTNER_HEADERS,
+        json={"status": "question", "reason": "Bitte Adresse bestaetigen"},
+    )
+    assert question_response.status_code == 200
+    processed_response = client.post(
+        f"/api/partner/mutation-packages/{package['package_id']}/status",
+        headers=PARTNER_HEADERS,
+        json={"status": "processed"},
+    )
+    assert processed_response.status_code == 200
+
+    response = client.get("/api/partner/tasks", headers=PARTNER_HEADERS)
+
+    assert response.status_code == 200
+    assert [
+        task
+        for task in response.json()
+        if task["package_id"] == package["package_id"]
+    ] == []
+
+
+def test_partner_admin_can_list_technical_non_possibility_task() -> None:
+    client = TestClient(app)
+    package = create_approved_package(
+        client,
+        email="partner-task-technical@example.test",
+        quarter="2032-Q3",
+        submitted_on="2032-06-30",
+    )
+    status_response = client.post(
+        f"/api/partner/mutation-packages/{package['package_id']}/status",
+        headers=PARTNER_HEADERS,
+        json={
+            "status": "technically_not_possible",
+            "reason": "Messpunkt fehlt im EW-System",
+        },
+    )
+    assert status_response.status_code == 200
+
+    response = client.get("/api/partner/tasks", headers=PARTNER_HEADERS)
+
+    assert response.status_code == 200
+    tasks = [
+        task
+        for task in response.json()
+        if task["package_id"] == package["package_id"]
+    ]
+    assert tasks == [
+        {
+            "task_id": f"{package['package_id']}:technically_not_possible",
+            "package_id": package["package_id"],
+            "leg_id": "basadingen",
+            "quarter": "2032-Q3",
+            "effective_date": "2032-10-01",
+            "status": "technically_not_possible",
+            "reference": None,
+            "reason": "Messpunkt fehlt im EW-System",
+            "created_at": status_response.json()["status_history"][-1]["created_at"],
+            "record_count": 1,
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        "Bearer dev:participant",
+        "Bearer dev:leg_admin",
+        "Bearer dev:leg_admin",
+    ],
+)
+def test_partner_tasks_denies_non_partner_roles(authorization: str) -> None:
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/partner/tasks",
+        headers={"Authorization": authorization},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Role is not allowed"}
+
+
 @pytest.mark.parametrize("status", ["question", "technically_not_possible"])
 def test_follow_up_statuses_require_reference_or_reason(status: str) -> None:
     client = TestClient(app)
@@ -260,7 +395,7 @@ def test_partner_admin_can_inspect_redacted_package_detail() -> None:
     )
     document = client.post(
         "/api/admin/document-versions",
-        headers={"Authorization": "Bearer dev:platform_admin"},
+        headers={"Authorization": "Bearer dev:leg_admin"},
         json={
             "document_key": "portal_terms",
             "title": "Portal Nutzungsbedingungen",

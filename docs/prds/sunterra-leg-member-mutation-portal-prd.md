@@ -14,6 +14,12 @@ Meldepflichtige Änderungen werden als MutationRequests erfasst, durch LEG-Vertr
 
 Das Portal bleibt in v1 bewusst fokussiert: keine Abrechnung, kein Inkasso, kein Settlement, keine Bankdaten, keine 15-Minuten-Messwerte, keine freie Dateiablage und keine automatisierte Gemeinde-/EW-Schnittstelle.
 
+Die Portaloberfläche wird in einen öffentlichen und einen geschützten Teil getrennt. Alle Besucher landen zuerst auf einer schlanken öffentlichen SunTerra-LEG-Seite, die kurz erklärt, was eine LEG ist, wie Teilnahme grundsätzlich funktioniert und wie der Teilnahmeprozess startet. Bereits registrierte Teilnehmer, LEG-Vertreter, Gemeinde/EW-Administratoren und Plattform-Administratoren melden sich über einen gemeinsamen Login an und werden danach direkt in ihren jeweiligen Rollenbereich geführt.
+
+Der öffentliche Teilnahme-Start fragt nur die E-Mail-Adresse ab. Erst nach E-Mail-Verifikation ergänzt der Teilnehmer im geschützten Onboarding seinen Anzeigenamen und setzt ein Passwort. Das Portal nutzt damit ein echtes E-Mail-/Passwort-Login mit signierten JWT-Zugriffstokens. Öffentliche Einladungscodes bleiben ein optionales Admin-/Deep-Link-Werkzeug, werden aber nicht als primärer öffentlicher Onboarding-Weg präsentiert.
+
+Die visuelle Richtung folgt dem etablierten SunTerra-LEG-Design `Swiss Energy Infrastructure` / `Operator`: neutraler Near-White-Hintergrund, SunTerra-Grün als Primärfarbe, Solar-Gold nur als gezielter Akzent, IBM-Plex-Typografie, flache Panels mit Hairline-Rahmen und sichtbare Trust-/Sicherheits-/Statusmuster. Die öffentliche Seite darf einladender und luftiger wirken als die Arbeitsbereiche, bleibt aber Teil derselben SunTerra-Produktfamilie. Logo und großes Hero-Visual werden in diesem Slice bewusst noch nicht final entschieden.
+
 ## User Stories
 
 1. Als Teilnehmer möchte ich mich über eine Einladung registrieren, damit ich sicher dem richtigen LEG-Kontext zugeordnet werde.
@@ -72,6 +78,26 @@ Das Portal bleibt in v1 bewusst fokussiert: keine Abrechnung, kein Inkasso, kein
 54. Als Betreiber möchte ich Backup/Restore-Smokes haben, damit ein Datenverlustszenario vor Produktivbetrieb geübt ist.
 55. Als Entwickler möchte ich öffentliche DTOs rollenbasiert minimal halten, damit die API Datenschutz und Zuständigkeit ausdrückt.
 56. Als Entwickler möchte ich OpenAPI-generierte Types im Frontend verwenden, damit Backend- und Frontend-Verträge nicht auseinanderlaufen.
+57. Als Besucher möchte ich zuerst eine öffentliche SunTerra-LEG-Landing-Page sehen, damit ich verstehe, was eine LEG ist und wie ich teilnehmen kann.
+58. Als interessierter Teilnehmer möchte ich die Teilnahme mit meiner E-Mail-Adresse starten können, damit ich ohne Einladung beginnen kann und keine unnötigen Personendaten vor der Verifikation angeben muss.
+59. Als interessierter Teilnehmer möchte ich nach der E-Mail-Verifikation meinen Anzeigenamen und mein Passwort setzen können, damit ich mein geschütztes Portal-Konto abschliessen kann.
+60. Als registrierter Nutzer möchte ich mich über einen gemeinsamen Login anmelden, damit ich nicht zwischen Teilnehmer-, LEG-, Gemeinde/EW- oder Plattform-Login unterscheiden muss.
+61. Als angemeldeter Teilnehmer möchte ich direkt in `Mein Portal` landen, damit ich meine Mitgliedschaft, Dokumente, Einwilligungen und Mutationen ohne Umweg verwalten kann.
+62. Als angemeldeter LEG-Vertreter möchte ich direkt in `LEG-Verwaltung` landen, damit ich Mutationen, Freigaben, Dokumentversionen und Partnerzugänge bearbeiten kann.
+63. Als angemeldeter Gemeinde/EW-Administrator möchte ich direkt in `Gemeinde/EW` landen, damit ich Aufgaben, Pakete und das minimale Mitgliederregister bearbeiten kann.
+64. Als angemeldeter Plattform-Administrator möchte ich direkt in `Benutzerverwaltung` landen, damit ich Login-Konten und Zugriff steuern kann.
+65. Als Plattform-Administrator möchte ich alle bestehenden Login-Konten sehen können, damit ich Zugriff und Rollen überprüfen kann.
+66. Als Plattform-Administrator möchte ich interne LEG- und Plattform-Nutzer anlegen können, damit administrative Zugänge kontrolliert entstehen.
+67. Als Plattform-Administrator möchte ich Anzeigenamen, Rollen, Aktivstatus und Startpasswörter verwalten können, damit Zugriffe korrigiert oder gesperrt werden können.
+68. Als Plattform-Administrator möchte ich bestehende Teilnehmer- und Gemeinde/EW-Konten verwalten, ohne neue Teilnehmermitgliedschaften anzulegen, damit fachliche Mitgliedschaftsprozesse nicht umgangen werden.
+69. Als LEG-Vertreter möchte ich einen Gemeinde/EW-Admin über einen expliziten Partnerzugangs-Flow anlegen, damit ein besonders sensibler Partnerzugriff bewusst und nachvollziehbar vergeben wird.
+70. Als LEG-Vertreter möchte ich beim Erstellen eines Gemeinde/EW-Zugangs E-Mail, Anzeigename, Organisation/Zuständigkeit und Startpasswort erfassen, damit der Zugang fachlich eindeutig ist.
+71. Als LEG-Vertreter möchte ich vor dem Erstellen eines Gemeinde/EW-Zugangs sehen, welche Daten diese Rolle sehen darf, damit Fehlvergabe vermieden wird.
+72. Als LEG-Vertreter möchte ich Dokumentversionen veröffentlichen können, damit fachliche Bedingungen und Hinweise bei der LEG-Zuständigkeit bleiben.
+73. Als Plattform-Administrator möchte ich Dokumentversionen einsehen, aber nicht veröffentlichen können, damit technische Administration nicht mit fachlicher LEG-Verantwortung vermischt wird.
+74. Als Betreiber möchte ich Demo-Rollen nur als klar markiertes Entwicklungswerkzeug sehen, damit die öffentliche Seite produktnah wirkt.
+75. Als Besucher möchte ich ein sanftes Nutzenversprechen sehen, ohne konkrete Spar- oder Ertragsversprechen, damit die LEG verständlich wirkt, ohne falsche Erwartungen zu setzen.
+76. Als Nutzer möchte ich die SunTerra-Oberfläche als ruhige, präzise Infrastrukturplattform erleben, damit öffentliche und geschützte Bereiche als ein kohärentes Produkt wirken.
 
 ## Implementation Decisions
 
@@ -82,6 +108,17 @@ Das Portal bleibt in v1 bewusst fokussiert: keine Abrechnung, kein Inkasso, kein
 - Die Kernobjekte sind LEG, Participant, Membership, MeterPoint, GenerationAsset, DocumentVersion, ConsentEvidence, IdentityVerification, MutationRequest, MutationPackage, PartnerTask, FileEvidence und AuditEvent.
 - Die Rechtsbasis für den Mutationskern orientiert sich an der VSE-Branchenempfehlung LEG und der Art. 19g StromVV-Referenz, insbesondere Bildung/Auflösung, Teilnehmerkreisänderungen, Aussenvertretung, technische Erzeugungsdaten und Mindestverhältnis-Meldung.
 - Onboarding unterstützt Einladung und öffentlichen Self-Service.
+- Die Portalrouten sind produktseitig getrennt: `/` für die öffentliche Landing-Page, `/registrieren` für den E-Mail-Start, `/login` für den gemeinsamen Login und `/app` für den geschützten Rollenbereich.
+- Der öffentliche Self-Service-Start erfasst nur eine E-Mail-Adresse. Anzeigename und Passwort werden erst nach E-Mail-Verifikation im geschützten Teilnehmer-Setup gesetzt.
+- Das Login nutzt E-Mail und Passwort mit signierten JWT-Zugriffstokens. Tokens werden mit `SUNTERRA_SECRET_KEY` signiert, laufen nach 8 Stunden ab und haben in diesem Slice keine Refresh-Token.
+- Nutzerkonten enthalten mindestens ID, E-Mail, Anzeigename, Rolle, Aktivstatus, Passwort-Hash, Passwort-Salt und optional Organisation/Zuständigkeit für Gemeinde/EW-Administratoren.
+- Passwörter werden nie im Klartext gespeichert. Startpasswörter werden nur zum Setzen oder Zurücksetzen verwendet und danach gehasht.
+- Plattform-Administratoren verwalten alle bestehenden Login-Konten, dürfen aber keine neuen Teilnehmermitgliedschaften anlegen.
+- Plattform-Administratoren können interne LEG- und Plattform-Nutzer anlegen, Anzeigenamen und Rollen anpassen, Konten aktivieren/deaktivieren und Startpasswörter zurücksetzen.
+- Gemeinde/EW-Administratoren werden durch LEG-Vertreter über einen expliziten Partnerzugangs-Flow angelegt, weil die LEG die Partnerbeziehung verantwortet.
+- Dokumentversionen werden durch LEG-Vertreter veröffentlicht. Plattform-Administratoren dürfen Dokumentversionen einsehen, aber nicht veröffentlichen.
+- Demo-Rollen und Development-Token bleiben nur als klar markiertes lokales Entwicklungswerkzeug und erscheinen nicht auf der öffentlichen Landing-Page.
+- Die visuelle Richtung ist `Swiss Energy Infrastructure` / `Operator`; die Landing-Page ist etwas einladender, aber nutzt dieselben SunTerra-Tokens und denselben ruhigen Infrastruktur-Charakter.
 - E-Mail-Verifikation ist Teil des Authentifizierungs- und Onboarding-Flusses.
 - Identitätsprüfung ist risikobasiert. E-ID oder SwissID werden in v1 nicht fest eingebaut, aber als spätere Provider-Schnittstelle berücksichtigt.
 - Dokumente sind versioniert. Einwilligungen werden als ConsentEvidence mit Hash, Zeitpunkt, Dokumentversion und Kontext gespeichert.
@@ -122,6 +159,8 @@ Das Portal bleibt in v1 bewusst fokussiert: keine Abrechnung, kein Inkasso, kein
 - Datei-Zugriffsschutz wird getestet, inklusive Zweck, Version, Hash, Zugriffsschutz und Aufbewahrungsstatus.
 - AuditEvent-Erzeugung und Audit-Hashing werden an relevanten Aktionen getestet.
 - Frontend-Smokes prüfen die wichtigsten Nutzerwege: Teilnehmer-Onboarding, direkte Kontaktänderung, meldepflichtige Mutation, LEG-Freigabe, Paketbildung, Partner-Inbox, Partner-Mitgliederregister und deutschsprachige UI.
+- Backend-Workflowtests prüfen Login-Erfolg und -Fehler, inaktive Nutzer, JWT-basierte `/api/me`-Auflösung, E-Mail-first-Registrierung, verifiziertes Teilnehmer-Setup, Plattform-Benutzerverwaltung, LEG-Erstellung von Gemeinde/EW-Administratoren und neue Dokument-RBAC-Regeln.
+- Frontend-Tests prüfen, dass die öffentliche Landing-Page der erste Screen ist, `Teilnahme starten` nach `/registrieren` führt, `Einloggen` den gemeinsamen Login öffnet, Rollen nach Login direkt in ihre Startfunktion gelangen und Demo-Rollen nicht auf der Landing-Page sichtbar sind.
 - Frontend-Tests sollen Nutzerinteraktion und sichtbares Verhalten prüfen, nicht interne React-Komponentenstruktur.
 - Migration- und Deployment-Tests umfassen frische Postgres-Migration, Backup/Restore-Smoke, Secret-Konfigurationschecks und produktionsnahe Startguards.
 - Da das Projekt ein Neubau ist, gibt es noch keine vorhandene Testsuite als Prior Art. Die ersten Tests sollen deshalb die oben genannten Systemgrenzen etablieren und danach als Muster für weitere Issues dienen.
@@ -138,6 +177,9 @@ Das Portal bleibt in v1 bewusst fokussiert: keine Abrechnung, kein Inkasso, kein
 - Automatische Gemeinde-/EW-Schnittstelle in v1
 - E-ID- oder SwissID-Produktintegration in v1
 - Status- oder Frist-E-Mails in v1
+- Refresh-Token, MFA, Passwort-zurücksetzen-per-E-Mail und produktive Mailzustellung
+- Finale Logo-Entscheidung oder finale Hero-Visualisierung für die öffentliche Landing-Page
+- Konkrete Spar-, Ertrags- oder Preisversprechen auf der öffentlichen Landing-Page
 - Freie Dateiablage
 - Mehrsprachigkeit in v1
 - Mobile App

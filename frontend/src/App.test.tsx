@@ -3,9 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
+function renderAt(path: string) {
+  window.history.pushState({}, "", path);
+  return render(<App />);
+}
+
 describe("Portal shell", () => {
   afterEach(() => {
     window.localStorage.clear();
+    window.history.pushState({}, "", "/");
     vi.unstubAllGlobals();
   });
 
@@ -28,14 +34,74 @@ describe("Portal shell", () => {
       }),
     );
 
-    render(<App />);
+    renderAt("/");
 
     expect(
       screen.getByRole("heading", { name: "SunTerra LEG Portal" }),
     ).toBeTruthy();
-    expect(screen.getByText("Mitglieder- und Mutationsportal")).toBeTruthy();
+    expect(screen.getByText("Teilnahme starten")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Mein Portal, LEG-Verwaltung, Gemeinde/EW und Benutzerverwaltung fuehren direkt zu den relevanten Funktionen.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Demo-Rollen")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Teilnehmer" })).toBeNull();
     expect(await screen.findByText("Backend verbunden")).toBeTruthy();
     expect(screen.getByText("sunterra-leg-portal 0.1.0")).toBeTruthy();
+  });
+
+  it("navigiert von der Public Landing zu Registrierung und Login", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(
+          JSON.stringify({
+            status: "ok",
+            service: "sunterra-leg-portal",
+            version: "0.1.0",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }),
+    );
+
+    const { unmount } = renderAt("/");
+    expect(await screen.findByText("Backend verbunden")).toBeTruthy();
+
+    const publicLanding = screen.getByRole("region", {
+      name: "SunTerra LEG Portal",
+    });
+    fireEvent.click(
+      within(publicLanding).getByRole("button", {
+        name: "Teilnahme starten",
+      }),
+    );
+
+    expect(window.location.pathname).toBe("/registrieren");
+    expect(
+      screen.getByRole("heading", { name: "Teilnahme starten" }),
+    ).toBeTruthy();
+
+    unmount();
+    renderAt("/");
+    expect(await screen.findByText("Backend verbunden")).toBeTruthy();
+
+    const refreshedPublicLanding = screen.getByRole("region", {
+      name: "SunTerra LEG Portal",
+    });
+    fireEvent.click(
+      within(refreshedPublicLanding).getByRole("button", {
+        name: "Einloggen",
+      }),
+    );
+
+    expect(window.location.pathname).toBe("/login");
+    expect(screen.getByRole("heading", { name: "Einloggen" })).toBeTruthy();
   });
 
   it("blockiert den geschützten Arbeitsbereich ohne Anmeldung", async () => {
@@ -57,12 +123,12 @@ describe("Portal shell", () => {
       }),
     );
 
-    render(<App />);
+    renderAt("/app");
 
     expect(await screen.findByText("Backend verbunden")).toBeTruthy();
     expect(screen.getByText("Anmeldung erforderlich")).toBeTruthy();
     expect(
-      screen.getByText("Wähle für die lokale Entwicklung eine Demo-Rolle."),
+      screen.getByText("Fuer die lokale Entwicklung kann eine Demo-Rolle genutzt werden."),
     ).toBeTruthy();
   });
 
@@ -101,10 +167,10 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "Teilnehmer" }).click();
 
-    expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+    expect(await screen.findByText("Mein Portal")).toBeTruthy();
     expect(screen.getByText("Teilnehmer Demo")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/me",
@@ -115,18 +181,18 @@ describe("Portal shell", () => {
   });
 
   it.each([
-    ["Teilnehmer", "participant", "Mein Mitgliederbereich", "Teilnehmer Demo"],
-    ["LEG Admin", "leg_admin", "LEG Verwaltung", "LEG Admin Demo"],
+    ["Teilnehmer", "participant", "Mein Portal", "Teilnehmer Demo"],
+    ["LEG Admin", "leg_admin", "LEG-Verwaltung", "LEG Admin Demo"],
     [
       "Gemeinde/EW",
       "partner_admin",
-      "Gemeinde/EW Arbeitsplatz",
+      "Gemeinde/EW",
       "Partner Admin Demo",
     ],
     [
-      "Plattform",
+      "Benutzerverwaltung",
       "platform_admin",
-      "Plattform Administration",
+      "Benutzerverwaltung",
       "Plattform Admin Demo",
     ],
   ])(
@@ -172,13 +238,340 @@ describe("Portal shell", () => {
         }),
       );
 
-      render(<App />);
+      renderAt("/login");
       screen.getByRole("button", { name: buttonLabel }).click();
 
       expect(await screen.findByText(workspaceTitle)).toBeTruthy();
       expect(screen.getByText(displayName)).toBeTruthy();
     },
   );
+
+  it.each([
+    ["participant", "participant@example.test", "Teilnehmer Demo", "Mein Portal"],
+    ["leg_admin", "leg-admin@example.test", "LEG Admin Demo", "LEG-Verwaltung"],
+    [
+      "partner_admin",
+      "partner-admin@example.test",
+      "Partner Admin Demo",
+      "Gemeinde/EW",
+    ],
+    [
+      "platform_admin",
+      "platform-admin@example.test",
+      "Plattform Admin Demo",
+      "Benutzerverwaltung",
+    ],
+  ])(
+    "landet nach Passwort-Login direkt im %s Startbereich",
+    async (role, email, displayName, workspaceTitle) => {
+      const token = `jwt-${role}`;
+      const user = {
+        id: `jwt-user-${role}`,
+        email,
+        display_name: displayName,
+        role,
+      };
+      const fetchMock = vi.fn(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+
+          if (url.endsWith("/api/auth/login")) {
+            expect(init?.method).toBe("POST");
+            expect(init?.headers).toEqual({
+              "Content-Type": "application/json",
+            });
+            expect(JSON.parse(init?.body as string)).toEqual({
+              email,
+              password: "SunTerra123!",
+            });
+
+            return new Response(
+              JSON.stringify({
+                access_token: token,
+                token_type: "bearer",
+                expires_in_seconds: 28800,
+                user,
+              }),
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                },
+              },
+            );
+          }
+
+          if (url.endsWith("/api/me")) {
+            expect(init?.headers).toEqual({
+              Authorization: `Bearer ${token}`,
+            });
+
+            return new Response(JSON.stringify(user), {
+              headers: {
+                "Content-Type": "application/json",
+              },
+            });
+          }
+
+          if (url.endsWith("/api/participants/me/membership")) {
+            return new Response(
+              JSON.stringify({
+                participant_id: user.id,
+                display_name: displayName,
+                email,
+                leg_id: "basadingen",
+                leg_name: "SunTerra LEG Basadingen",
+                membership_status: "active",
+                billing_notice: "Abrechnung und Inkasso bleiben bei Gemeinde/EW.",
+              }),
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                },
+              },
+            );
+          }
+
+          if (
+            url.endsWith("/api/documents/current?document_key=portal_terms") ||
+            url.endsWith("/api/participants/me/contact-channels")
+          ) {
+            return new Response(JSON.stringify({ detail: "Not found" }), {
+              status: 404,
+              headers: {
+                "Content-Type": "application/json",
+              },
+            });
+          }
+
+          if (
+            url.endsWith("/api/admin/mutation-requests") ||
+            url.endsWith("/api/partner/mutation-packages") ||
+            url.endsWith("/api/partner/tasks") ||
+            url.endsWith("/api/admin/users")
+          ) {
+            return new Response(JSON.stringify([]), {
+              headers: {
+                "Content-Type": "application/json",
+              },
+            });
+          }
+
+          if (url.endsWith("/api/partner/member-register")) {
+            return new Response(
+              JSON.stringify({
+                leg_id: "basadingen",
+                leg_name: "SunTerra LEG Basadingen",
+                members: [],
+              }),
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                },
+              },
+            );
+          }
+
+          return new Response(
+            JSON.stringify({
+              status: "ok",
+              service: "sunterra-leg-portal",
+              version: "0.1.0",
+            }),
+            {
+              headers: {
+                "Content-Type": "application/json",
+              },
+            },
+          );
+        },
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderAt("/login");
+      window.localStorage.setItem("sunterra.devToken", "dev:participant");
+      fireEvent.change(screen.getByLabelText("E-Mail"), {
+        target: { value: email },
+      });
+      fireEvent.change(screen.getByLabelText("Passwort"), {
+        target: { value: "SunTerra123!" },
+      });
+      screen.getByRole("button", { name: "Einloggen" }).click();
+
+      expect(
+        await screen.findByRole("heading", { name: workspaceTitle }),
+      ).toBeTruthy();
+      expect(screen.getByText(displayName)).toBeTruthy();
+      await waitFor(() => expect(window.location.pathname).toBe("/app"));
+      expect(window.localStorage.getItem("sunterra.accessToken")).toBe(token);
+      expect(window.localStorage.getItem("sunterra.devToken")).toBeNull();
+    },
+  );
+
+  it("meldet ab und entfernt gespeicherte Tokens", async () => {
+    window.localStorage.setItem("sunterra.accessToken", "stored-jwt");
+    window.localStorage.setItem("sunterra.devToken", "dev:platform_admin");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer stored-jwt",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "platform-admin",
+            email: "platform-admin@example.test",
+            display_name: "Plattform Admin Demo",
+            role: "platform_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/users")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer stored-jwt",
+        });
+
+        return new Response(JSON.stringify([]), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/app");
+
+    expect(
+      await screen.findByRole("heading", { name: "Benutzerverwaltung" }),
+    ).toBeTruthy();
+    screen.getByRole("button", { name: "Abmelden" }).click();
+
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "SunTerra LEG Portal" }),
+      ).toBeTruthy(),
+    );
+    expect(window.localStorage.getItem("sunterra.accessToken")).toBeNull();
+    expect(window.localStorage.getItem("sunterra.devToken")).toBeNull();
+  });
+
+  it("aktualisiert als Platform Admin Anzeigename und Rolle eines Benutzerkontos", async () => {
+    let account = {
+      id: "leg-admin-1",
+      email: "leg-admin-1@example.test",
+      display_name: "Leo Admin",
+      role: "leg_admin",
+      active: true,
+      organization: null,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-platform-admin",
+            email: "platform-admin@example.test",
+            display_name: "Plattform Admin Demo",
+            role: "platform_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/users/leg-admin-1")) {
+        expect(init?.method).toBe("PATCH");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:platform_admin",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          display_name: "Lea Admin",
+          role: "platform_admin",
+        });
+
+        account = {
+          ...account,
+          display_name: "Lea Admin",
+          role: "platform_admin",
+        };
+
+        return new Response(JSON.stringify(account), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/admin/users")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:platform_admin",
+        });
+
+        return new Response(JSON.stringify([account]), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+    screen.getByRole("button", { name: "Benutzerverwaltung" }).click();
+
+    const row = await screen.findByLabelText("Konto leg-admin-1@example.test");
+    fireEvent.change(within(row).getByLabelText("Anzeigename"), {
+      target: { value: "Lea Admin" },
+    });
+    fireEvent.change(within(row).getByLabelText("Rolle"), {
+      target: { value: "platform_admin" },
+    });
+    within(row).getByRole("button", { name: "Aenderungen speichern" }).click();
+
+    expect(await within(row).findByText("Benutzer aktualisiert")).toBeTruthy();
+    expect(within(row).getByDisplayValue("Lea Admin")).toBeTruthy();
+    expect(within(row).getByText(/Benutzerverwaltung/)).toBeTruthy();
+  });
 
   it("erstellt als LEG Admin eine Teilnehmer-Einladung", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -243,10 +636,10 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "LEG Admin" }).click();
 
-    expect(await screen.findByText("LEG Verwaltung")).toBeTruthy();
+    expect(await screen.findByText("LEG-Verwaltung")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("E-Mail"), {
       target: { value: "anna.keller@example.test" },
@@ -467,7 +860,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "LEG Admin" }).click();
 
     expect(await screen.findByText("Offene Mutationen")).toBeTruthy();
@@ -616,7 +1009,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "LEG Admin" }).click();
 
     expect(await screen.findByText("Offene Mutationen")).toBeTruthy();
@@ -751,7 +1144,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "LEG Admin" }).click();
 
     expect(await screen.findByText("Offene Mutationen")).toBeTruthy();
@@ -879,7 +1272,7 @@ describe("Portal shell", () => {
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "LEG Admin" }).click();
 
     expect(await screen.findByText("Mutationspakete")).toBeTruthy();
@@ -1050,7 +1443,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "Gemeinde/EW" }).click();
 
     expect(await screen.findByText("Mutationspaket-Eingang")).toBeTruthy();
@@ -1071,6 +1464,87 @@ describe("Portal shell", () => {
 
     expect((await inbox.findAllByText("Status: question")).length).toBeGreaterThan(0);
     expect(inbox.getByText("EW-RF-404")).toBeTruthy();
+  });
+
+  it("zeigt Gemeinde/EW aktive Partner-Aufgaben aus Paket-Follow-ups", async () => {
+    const partnerTasks = [
+      {
+        task_id: "package-task-1:question",
+        package_id: "package-task-1",
+        leg_id: "basadingen",
+        quarter: "2026-Q4",
+        effective_date: "2027-01-01",
+        status: "question",
+        reference: "EW-RF-505",
+        reason: null,
+        created_at: "2026-09-15T08:30:00+00:00",
+        record_count: 1,
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-partner-admin",
+            email: "partner-admin@example.test",
+            display_name: "Partner Admin Demo",
+            role: "partner_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/partner/mutation-packages")) {
+        return new Response(JSON.stringify([]), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/partner/tasks")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:partner_admin",
+        });
+
+        return new Response(JSON.stringify(partnerTasks), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+    screen.getByRole("button", { name: "Gemeinde/EW" }).click();
+
+    expect(await screen.findByText("Partner-Aufgaben")).toBeTruthy();
+    const tasks = within(screen.getByLabelText("Partner-Aufgaben"));
+    expect(tasks.getByText("Paket package-task-1")).toBeTruthy();
+    expect(tasks.getByText("Rückfrage")).toBeTruthy();
+    expect(tasks.getByText("EW-RF-505")).toBeTruthy();
+    expect(tasks.getByText("1 Mutation")).toBeTruthy();
+    expect(tasks.queryByText("dev-leg-admin")).toBeNull();
   });
 
   it("zeigt Gemeinde/EW das Mitgliederregister ohne private Felder", async () => {
@@ -1168,7 +1642,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "Gemeinde/EW" }).click();
 
     expect(await screen.findByText("Mitgliederregister")).toBeTruthy();
@@ -1199,17 +1673,17 @@ describe("Portal shell", () => {
     }
   });
 
-  it("veroeffentlicht als Plattform-Admin eine Dokumentversion", async () => {
+  it("veroeffentlicht als LEG Admin eine Dokumentversion", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
 
       if (url.endsWith("/api/me")) {
         return new Response(
           JSON.stringify({
-            id: "dev-platform-admin",
-            email: "platform-admin@example.test",
-            display_name: "Plattform Admin Demo",
-            role: "platform_admin",
+            id: "dev-leg-admin",
+            email: "leg-admin@example.test",
+            display_name: "LEG Admin Demo",
+            role: "leg_admin",
           }),
           {
             headers: {
@@ -1222,7 +1696,7 @@ describe("Portal shell", () => {
       if (url.endsWith("/api/admin/document-versions")) {
         expect(init?.method).toBe("POST");
         expect(init?.headers).toEqual({
-          Authorization: "Bearer dev:platform_admin",
+          Authorization: "Bearer dev:leg_admin",
           "Content-Type": "application/json",
         });
         expect(JSON.parse(init?.body as string)).toEqual({
@@ -1267,10 +1741,10 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
-    screen.getByRole("button", { name: "Plattform" }).click();
+    renderAt("/login");
+    screen.getByRole("button", { name: "LEG Admin" }).click();
 
-    expect(await screen.findByText("Plattform Administration")).toBeTruthy();
+    expect(await screen.findByText("LEG-Verwaltung")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Titel"), {
       target: { value: "Portal Nutzungsbedingungen" },
@@ -1282,12 +1756,106 @@ describe("Portal shell", () => {
       target: { value: "Teilnahmebedingungen fuer das Portal." },
     });
     screen
-      .getByRole("button", { name: "Dokumentversion veröffentlichen" })
+      .getByRole("button", { name: "Dokumentversion veroeffentlichen" })
       .click();
 
-    expect(await screen.findByText("Dokumentversion veröffentlicht")).toBeTruthy();
+    expect(await screen.findByText("Dokumentversion veroeffentlicht")).toBeTruthy();
     expect(screen.getByText("2026-06-22")).toBeTruthy();
     expect(screen.getByText("hash-portal-terms")).toBeTruthy();
+  });
+
+  it("warnt LEG Admins vor Datenzugriff und erstellt Gemeinde/EW Zugang", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-leg-admin",
+            email: "leg-admin@example.test",
+            display_name: "LEG Admin Demo",
+            role: "leg_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/partner-admin-users")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          email: "ew-admin@example.test",
+          display_name: "EW Admin",
+          organization: "Gemeinde/EW Basadingen",
+          password: "Start123!",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "partner-admin-created",
+            email: "ew-admin@example.test",
+            display_name: "EW Admin",
+            role: "partner_admin",
+            active: true,
+            organization: "Gemeinde/EW Basadingen",
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+    screen.getByRole("button", { name: "LEG Admin" }).click();
+
+    expect(await screen.findByText("LEG-Verwaltung")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Warnung: Dieser Zugang erhaelt Zugriff auf Gemeinde/EW-Aufgaben, Mutationspakete und rollenbezogene Mitgliederdaten der LEG.",
+      ),
+    ).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Gemeinde/EW E-Mail"), {
+      target: { value: "ew-admin@example.test" },
+    });
+    fireEvent.change(screen.getByLabelText("Gemeinde/EW Anzeigename"), {
+      target: { value: "EW Admin" },
+    });
+    fireEvent.change(screen.getByLabelText("Organisation / Verantwortung"), {
+      target: { value: "Gemeinde/EW Basadingen" },
+    });
+    fireEvent.change(screen.getByLabelText("Startpasswort"), {
+      target: { value: "Start123!" },
+    });
+    screen.getByRole("button", { name: "Gemeinde/EW Zugang erstellen" }).click();
+
+    expect(await screen.findByText("Gemeinde/EW Zugang erstellt")).toBeTruthy();
+    expect(screen.getByText("ew-admin@example.test")).toBeTruthy();
   });
 
   it("zeigt Teilnehmern die aktuelle Dokumentversion vor Zustimmung", async () => {
@@ -1349,7 +1917,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "Teilnehmer" }).click();
 
     expect(await screen.findByText("Portal Nutzungsbedingungen")).toBeTruthy();
@@ -1459,7 +2027,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "Teilnehmer" }).click();
 
     expect(await screen.findByText("Portal Nutzungsbedingungen")).toBeTruthy();
@@ -1529,7 +2097,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
 
     fireEvent.change(screen.getByLabelText("Einladungstoken"), {
       target: { value: "invite-token-anna" },
@@ -1616,7 +2184,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
 
     fireEvent.change(screen.getByLabelText("Einladungstoken"), {
       target: { value: "invite-token-anna" },
@@ -1625,10 +2193,10 @@ describe("Portal shell", () => {
       .getByRole("button", { name: "Einladung annehmen und verifizieren" })
       .click();
 
-    expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+    expect(await screen.findByText("Mein Portal")).toBeTruthy();
 
     const workspace = within(
-      screen.getByLabelText("Geschützter Arbeitsbereich"),
+      screen.getByLabelText("Geschuetzter Arbeitsbereich"),
     );
     expect(workspace.getByText("Anna Keller")).toBeTruthy();
     expect(workspace.getByText("anna.keller@example.test")).toBeTruthy();
@@ -1732,7 +2300,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
 
     fireEvent.change(screen.getByLabelText("Einladungstoken"), {
       target: { value: "invite-token-anna" },
@@ -1880,7 +2448,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
 
     fireEvent.change(screen.getByLabelText("Einladungstoken"), {
       target: { value: "invite-token-anna" },
@@ -2016,7 +2584,7 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "Teilnehmer" }).click();
 
     expect(await screen.findByText("Kontaktkanäle")).toBeTruthy();
@@ -2144,10 +2712,10 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "Teilnehmer" }).click();
 
-    expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+    expect(await screen.findByText("Mein Portal")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Quartal"), {
       target: { value: "2026-Q3" },
@@ -2262,10 +2830,10 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/login");
     screen.getByRole("button", { name: "Teilnehmer" }).click();
 
-    expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+    expect(await screen.findByText("Mein Portal")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Mutationsmodus"), {
       target: { value: "special" },
@@ -2303,7 +2871,6 @@ describe("Portal shell", () => {
         });
         expect(JSON.parse(init?.body as string)).toEqual({
           email: "selina.frei@example.test",
-          display_name: "Selina Frei",
         });
 
         return new Response(
@@ -2358,9 +2925,60 @@ describe("Portal shell", () => {
         return new Response(
           JSON.stringify({
             action: "membership_activation",
-            required_level: "email_verified",
+            required_level: "account_setup",
             current_level: "email_verified",
-            satisfied: true,
+            satisfied: false,
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/auth/participant-account-setup")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer self-service-access",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          display_name: "Selina Frei",
+          password: "SicheresPasswort123!",
+        });
+
+        return new Response(
+          JSON.stringify({
+            access_token: "participant-setup-access",
+            token_type: "bearer",
+            expires_in_seconds: 28800,
+            user: {
+              id: "participant-selina",
+              email: "selina.frei@example.test",
+              display_name: "Selina Frei",
+              role: "participant",
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/me")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer participant-setup-access",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "participant-selina",
+            email: "selina.frei@example.test",
+            display_name: "Selina Frei",
+            role: "participant",
           }),
           {
             headers: {
@@ -2372,7 +2990,7 @@ describe("Portal shell", () => {
 
       if (url.endsWith("/api/participants/me/membership")) {
         expect(init?.headers).toEqual({
-          Authorization: "Bearer self-service-access",
+          Authorization: "Bearer participant-setup-access",
         });
 
         return new Response(
@@ -2408,26 +3026,35 @@ describe("Portal shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    renderAt("/registrieren");
 
     fireEvent.change(screen.getByLabelText("Self-Service E-Mail"), {
       target: { value: "selina.frei@example.test" },
     });
-    fireEvent.change(screen.getByLabelText("Self-Service Anzeigename"), {
-      target: { value: "Selina Frei" },
-    });
     screen.getByRole("button", { name: "Self-Service starten" }).click();
 
-    expect(await screen.findByText("Identitätsprüfung")).toBeTruthy();
+    expect(await screen.findByText("Identitaetspruefung")).toBeTruthy();
     expect(screen.getByText("Erforderlich: email_verified")).toBeTruthy();
     expect(screen.getByText("Aktuell: unverified")).toBeTruthy();
     expect(screen.getByText("Checkpoint offen")).toBeTruthy();
     expect(screen.getByText("dev-self-service-token")).toBeTruthy();
-    expect(screen.queryByText("Mein Mitgliederbereich")).toBeNull();
+    expect(screen.queryByText("Mein Portal")).toBeNull();
 
     screen.getByRole("button", { name: "Dev E-Mail verifizieren" }).click();
 
-    expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { name: "Konto einrichten" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Erforderlich: account_setup")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Anzeigename"), {
+      target: { value: "Selina Frei" },
+    });
+    fireEvent.change(screen.getByLabelText("Passwort"), {
+      target: { value: "SicheresPasswort123!" },
+    });
+    screen.getByRole("button", { name: "Konto einrichten" }).click();
+
+    expect(await screen.findByText("Mein Portal")).toBeTruthy();
     expect(screen.getByText("Selina Frei")).toBeTruthy();
     expect(screen.getByText("selina.frei@example.test")).toBeTruthy();
   });
@@ -2440,11 +3067,11 @@ describe("Portal shell", () => {
       }),
     );
 
-    render(<App />);
+    renderAt("/login");
 
     expect(await screen.findByText("Backend nicht erreichbar")).toBeTruthy();
     expect(
-      screen.getByText("Die Portaloberfläche ist geladen."),
+      screen.getByText("Die Portaloberflaeche ist geladen."),
     ).toBeTruthy();
   });
 });
@@ -2533,10 +3160,10 @@ it("reicht als Teilnehmer eine regulaere Rollenmutation ein und zeigt Typ und De
   });
   vi.stubGlobal("fetch", fetchMock);
 
-  render(<App />);
+  renderAt("/login");
   screen.getByRole("button", { name: "Teilnehmer" }).click();
 
-  expect(await screen.findByText("Mein Mitgliederbereich")).toBeTruthy();
+  expect(await screen.findByText("Mein Portal")).toBeTruthy();
 
   fireEvent.change(screen.getByLabelText("Mutationstyp"), {
     target: { value: "role" },

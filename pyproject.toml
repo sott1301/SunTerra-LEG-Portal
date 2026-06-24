@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Member and mutation portal for the SunTerra LEG Basadingen."
 requires-python = ">=3.12"
 dependencies = [
+  "aiosqlite>=0.20,<1.0",
   "alembic>=1.17,<2.0",
+  "asyncpg>=0.29,<1.0",
   "fastapi>=0.115,<1.0",
   "httpx>=0.28,<1.0",
   "sqlmodel>=0.0.24,<1.0",
