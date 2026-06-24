@@ -8,6 +8,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 READINESS_SCRIPT = PROJECT_ROOT / "scripts" / "production_readiness.py"
+MERMAID_MAP = PROJECT_ROOT / "docs" / "portal-mermaid-map.md"
+READINESS_DOCS = PROJECT_ROOT / "docs" / "ops" / "production-readiness.md"
 
 
 def run_readiness(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -67,6 +69,20 @@ def test_fresh_database_can_be_migrated(tmp_path: Path) -> None:
         }
 
     assert "alembic_version" in tables
+    assert "portal_state_snapshots" in tables
+    assert "portal_participants" in tables
+    assert "portal_participant_invitations" in tables
+    assert "portal_identity_verifications" in tables
+    assert "portal_document_versions" in tables
+    assert "portal_consent_evidence" in tables
+    assert "portal_mutation_requests" in tables
+    assert "portal_participant_audit_events" in tables
+    assert "portal_mutation_packages" in tables
+    assert "portal_mutation_package_metadata" in tables
+    assert "portal_packaged_mutation_requests" in tables
+    assert "portal_file_evidence" in tables
+    assert "portal_user_accounts" in tables
+    assert "portal_communication_events" in tables
 
 
 def test_production_startup_fails_when_required_config_is_missing() -> None:
@@ -126,6 +142,101 @@ def test_backup_restore_smoke_restores_persisted_test_data(tmp_path: Path) -> No
         ).fetchone()
 
     assert restored_marker == (payload["marker"],)
+
+
+def test_scaling_gates_cover_registered_and_active_user_write_paths(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "scaling-gates.db"
+    database_url = f"sqlite:///{database_path.as_posix()}"
+
+    result = run_readiness(
+        "scaling-gates",
+        "--database-url",
+        database_url,
+        "--registered-users",
+        "1000",
+        "--active-users",
+        "100",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "active_users": 100,
+        "check": "scaling-gates",
+        "concurrency_gates": [
+            "registration-account-setup",
+            "consent",
+            "mutation-submission",
+            "package-generation",
+        ],
+        "database_url": "sqlite:///<redacted>",
+        "legacy_snapshot_rows": 0,
+        "packaged_mutation_requests": 100,
+        "registered_users": 1000,
+        "status": "ok",
+    }
+
+    with sqlite3.connect(database_path) as connection:
+        counts = {
+            "participants": connection.execute(
+                "select count(*) from portal_participants",
+            ).fetchone()[0],
+            "users": connection.execute(
+                "select count(*) from portal_user_accounts",
+            ).fetchone()[0],
+            "consents": connection.execute(
+                "select count(*) from portal_consent_evidence",
+            ).fetchone()[0],
+            "mutations": connection.execute(
+                "select count(*) from portal_mutation_requests",
+            ).fetchone()[0],
+            "packages": connection.execute(
+                "select count(*) from portal_mutation_packages",
+            ).fetchone()[0],
+            "packaged": connection.execute(
+                "select count(*) from portal_packaged_mutation_requests",
+            ).fetchone()[0],
+            "snapshots": connection.execute(
+                "select count(*) from portal_state_snapshots",
+            ).fetchone()[0],
+        }
+
+    assert counts == {
+        "participants": 1000,
+        "users": 1000,
+        "consents": 100,
+        "mutations": 100,
+        "packages": 1,
+        "packaged": 100,
+        "snapshots": 0,
+    }
+
+
+def test_architecture_docs_show_db_runtime_persistence_and_scaling_gates() -> None:
+    mermaid = MERMAID_MAP.read_text(encoding="utf-8")
+    readiness = READINESS_DOCS.read_text(encoding="utf-8")
+
+    for expected in [
+        "DB Runtime Persistence",
+        "Admin API",
+        "Partner API",
+        "Participant API",
+        "Public/Auth API",
+    ]:
+        assert expected in mermaid
+
+    assert "Legacy snapshot compatibility" in readiness
+    assert "scaling-gates" in readiness
+    assert "1000 registered users" in readiness
+    assert "100 active users" in readiness
+    for expected in [
+        "registration/account setup",
+        "consent",
+        "mutation submission",
+        "package generation",
+    ]:
+        assert expected in readiness
 
 
 def test_production_config_check_reports_ready_without_leaking_secret(tmp_path: Path) -> None:

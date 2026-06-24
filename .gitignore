@@ -19,6 +19,7 @@ coverage/
 .env.*
 !.env.example
 *.db
+.runtime/
 
 # Editor / OS
 .DS_Store
@@ -30,4 +31,5 @@ Thumbs.db
 *.log
 pytest-*/
 tmp/
+.tmp/
 temp/

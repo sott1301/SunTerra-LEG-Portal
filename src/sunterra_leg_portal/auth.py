@@ -1,5 +1,11 @@
-from enum import StrEnum
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+import base64
+import hmac
+import json
+import os
+from hashlib import sha256
 
 from fastapi import Depends, Header, HTTPException, status
 from pydantic import BaseModel
@@ -46,6 +52,107 @@ DEV_USERS: dict[Role, CurrentUser] = {
     ),
 }
 DEV_PARTICIPANT_USERS: dict[str, CurrentUser] = {}
+JWT_ACCESS_TOKEN_SECONDS = 8 * 60 * 60
+_jwt_user_resolver: Callable[[str], CurrentUser | None] | None = None
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _jwt_secret() -> str:
+    return os.environ.get("SUNTERRA_SECRET_KEY", "local-development-secret")
+
+
+def _jwt_signature(signing_input: str) -> str:
+    digest = hmac.new(
+        _jwt_secret().encode("utf-8"),
+        signing_input.encode("ascii"),
+        sha256,
+    ).digest()
+    return _base64url_encode(digest)
+
+
+def set_jwt_user_resolver(
+    resolver: Callable[[str], CurrentUser | None],
+) -> None:
+    global _jwt_user_resolver
+
+    _jwt_user_resolver = resolver
+
+
+def create_access_token(user: CurrentUser) -> str:
+    now = datetime.now(UTC)
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {
+        "sub": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "role": user.role.value,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=JWT_ACCESS_TOKEN_SECONDS)).timestamp()),
+    }
+    header_part = _base64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    payload_part = _base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signing_input = f"{header_part}.{payload_part}"
+
+    return f"{signing_input}.{_jwt_signature(signing_input)}"
+
+
+def _current_user_from_jwt(token: str) -> CurrentUser:
+    try:
+        header_part, payload_part, signature = token.split(".", maxsplit=2)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access token",
+        ) from exc
+
+    signing_input = f"{header_part}.{payload_part}"
+    if not hmac.compare_digest(signature, _jwt_signature(signing_input)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access token",
+        )
+
+    try:
+        payload = json.loads(_base64url_decode(payload_part))
+        expires_at = int(payload["exp"])
+        user_id = str(payload["sub"])
+        role = Role(str(payload["role"]))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access token",
+        ) from exc
+
+    if expires_at < int(datetime.now(UTC).timestamp()):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token expired",
+        )
+
+    if _jwt_user_resolver is not None:
+        user = _jwt_user_resolver(user_id)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unknown or inactive user",
+            )
+
+        return user
+
+    return CurrentUser(
+        id=user_id,
+        email=str(payload.get("email", "")),
+        display_name=str(payload.get("display_name", "")),
+        role=role,
+    )
 
 
 def register_dev_participant_user(
@@ -63,13 +170,17 @@ def register_dev_participant_user(
 
 
 def current_user(authorization: str | None = Header(default=None)) -> CurrentUser:
-    if not authorization or not authorization.startswith("Bearer dev:"):
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
         )
 
-    role_name = authorization.removeprefix("Bearer dev:")
+    token = authorization.removeprefix("Bearer ")
+    if not token.startswith("dev:"):
+        return _current_user_from_jwt(token)
+
+    role_name = token.removeprefix("dev:")
     participant_prefix = f"{Role.PARTICIPANT.value}:"
     if role_name.startswith(participant_prefix):
         participant_id = role_name.removeprefix(participant_prefix)

@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from sunterra_leg_portal.main import app
 
 
-def verified_participant_token(client: TestClient, email: str) -> str:
+def verified_participant_token(client: TestClient, email: str) -> tuple[str, str]:
     invitation = client.post(
         "/api/admin/participant-invitations",
         headers={"Authorization": "Bearer dev:leg_admin"},
@@ -13,14 +13,21 @@ def verified_participant_token(client: TestClient, email: str) -> str:
         f"/api/auth/invitations/{invitation['token']}/accept",
     ).json()
     client.post(f"/api/auth/email-verifications/{invitation['token']}/verify")
+    setup = client.post(
+        "/api/auth/participant-account-setup",
+        headers={"Authorization": f"Bearer {accepted['access_token']}"},
+        json={"display_name": "Consent Tester", "password": "Start123!"},
+    )
 
-    return accepted["access_token"]
+    assert setup.status_code == 200
+    setup_payload = setup.json()
+    return setup_payload["access_token"], setup_payload["user"]["id"]
 
 
-def test_platform_admin_can_publish_document_version_for_portal_use() -> None:
+def test_leg_admin_can_publish_document_version_for_portal_use() -> None:
     response = TestClient(app).post(
         "/api/admin/document-versions",
-        headers={"Authorization": "Bearer dev:platform_admin"},
+        headers={"Authorization": "Bearer dev:leg_admin"},
         json={
             "document_key": "portal_terms",
             "title": "Portal Nutzungsbedingungen",
@@ -45,13 +52,13 @@ def test_platform_admin_can_publish_document_version_for_portal_use() -> None:
 
 def test_verified_participant_can_view_current_document_before_consent() -> None:
     client = TestClient(app)
-    participant_token = verified_participant_token(
+    participant_token, _participant_id = verified_participant_token(
         client,
         "view-current-doc@example.test",
     )
     published = client.post(
         "/api/admin/document-versions",
-        headers={"Authorization": "Bearer dev:platform_admin"},
+        headers={"Authorization": "Bearer dev:leg_admin"},
         json={
             "document_key": "portal_terms",
             "title": "Portal Nutzungsbedingungen",
@@ -81,13 +88,13 @@ def test_verified_participant_can_view_current_document_before_consent() -> None
 
 def test_participant_consent_records_exact_document_version_and_hash() -> None:
     client = TestClient(app)
-    participant_token = verified_participant_token(
+    participant_token, participant_id = verified_participant_token(
         client,
         "consent-version-hash@example.test",
     )
     first_document = client.post(
         "/api/admin/document-versions",
-        headers={"Authorization": "Bearer dev:platform_admin"},
+        headers={"Authorization": "Bearer dev:leg_admin"},
         json={
             "document_key": "portal_terms",
             "title": "Portal Nutzungsbedingungen",
@@ -98,7 +105,7 @@ def test_participant_consent_records_exact_document_version_and_hash() -> None:
     ).json()
     client.post(
         "/api/admin/document-versions",
-        headers={"Authorization": "Bearer dev:platform_admin"},
+        headers={"Authorization": "Bearer dev:leg_admin"},
         json={
             "document_key": "portal_terms",
             "title": "Portal Nutzungsbedingungen",
@@ -122,7 +129,7 @@ def test_participant_consent_records_exact_document_version_and_hash() -> None:
     payload = response.json()
     assert payload.pop("accepted_at")
     assert payload == {
-        "participant_id": participant_token.removeprefix("dev:participant:"),
+        "participant_id": participant_id,
         "document_version_id": first_document["id"],
         "document_key": "portal_terms",
         "version": "2026-06-24",
@@ -133,17 +140,17 @@ def test_participant_consent_records_exact_document_version_and_hash() -> None:
 
 def test_participant_can_view_own_consent_history() -> None:
     client = TestClient(app)
-    first_token = verified_participant_token(
+    first_token, _first_participant_id = verified_participant_token(
         client,
         "own-history@example.test",
     )
-    second_token = verified_participant_token(
+    second_token, _second_participant_id = verified_participant_token(
         client,
         "foreign-history@example.test",
     )
     first_document = client.post(
         "/api/admin/document-versions",
-        headers={"Authorization": "Bearer dev:platform_admin"},
+        headers={"Authorization": "Bearer dev:leg_admin"},
         json={
             "document_key": "portal_terms",
             "title": "Portal Nutzungsbedingungen",
@@ -154,7 +161,7 @@ def test_participant_can_view_own_consent_history() -> None:
     ).json()
     second_document = client.post(
         "/api/admin/document-versions",
-        headers={"Authorization": "Bearer dev:platform_admin"},
+        headers={"Authorization": "Bearer dev:leg_admin"},
         json={
             "document_key": "portal_terms",
             "title": "Portal Nutzungsbedingungen",

@@ -63,6 +63,26 @@ Das Frontend läuft standardmässig unter `http://127.0.0.1:5173` und leitet `/a
 
 Die Backend-Struktur ist für SQLModel und Alembic vorbereitet. Lokale Migrationen verwenden standardmässig `sqlite:///./sunterra-leg-portal.db`; produktionsnahe Umgebungen setzen `SUNTERRA_DATABASE_URL`.
 
+Wenn `SUNTERRA_DATABASE_URL` gesetzt ist, speichert das Portal den V1-Portalzustand datenbankgestützt und lädt ihn bei neuen Requests wieder. Für lokale Persistenz:
+
+```powershell
+$env:SUNTERRA_DATABASE_URL = "sqlite:///./sunterra-leg-portal.db"
+.\.venv\Scripts\python -m alembic upgrade head
+```
+
+`SUNTERRA_DATABASE_URL` ist eine SQLAlchemy/SQLModel-Datenbank-URL. Lokale Tests und Entwicklung können SQLite-Dateien wie oben verwenden; eine Postgres-kompatible Umgebung kann denselben Pfad mit einer URL wie `postgresql+psycopg://user:password@host:5432/database` betreiben, sofern der passende Treiber in der Laufzeitumgebung installiert ist.
+
+### OpenAPI-Typen
+
+Frontend-Vertragstypen werden aus der FastAPI-OpenAPI-Spezifikation generiert:
+
+```powershell
+npm run api:types
+npm run api:types:check
+```
+
+Die generierten Dateien liegen unter `frontend/src/generated/` und werden eingecheckt, damit Contract-Drift sichtbar bleibt.
+
 ### Production Readiness
 
 Die ersten produktionsnahen Smoke Checks fuer Konfiguration, frische Migrationen und Backup/Restore sind in `docs/ops/production-readiness.md` dokumentiert.
