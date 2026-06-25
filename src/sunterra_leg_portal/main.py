@@ -1,15 +1,19 @@
 import csv
+import hmac
 import json
 import os
 import secrets
-from base64 import b64decode
+import struct
+from base64 import b32decode, b32encode, b64decode
 from datetime import UTC, date, datetime, timedelta
-from hashlib import pbkdf2_hmac, sha256
+from hashlib import pbkdf2_hmac, sha1, sha256
 from io import StringIO
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -23,8 +27,10 @@ from sunterra_leg_portal.auth import (
     Role,
     create_access_token,
     current_user,
+    development_auth_enabled,
     register_dev_participant_user,
     require_roles,
+    require_roles_before_mfa,
     set_jwt_user_resolver,
 )
 from sunterra_leg_portal.config import production_lifespan
@@ -34,18 +40,27 @@ from sunterra_leg_portal.db import (
     PortalDocumentVersion,
     PortalFileEvidence,
     PortalIdentityVerification,
+    PortalInterestRecord,
     PortalMutationPackage,
     PortalMutationPackageMetadata,
     PortalMutationRequest,
+    PortalNetworkTopologyEntry,
     PortalPackagedMutationRequest,
+    PortalPasswordResetToken,
     PortalParticipant,
     PortalParticipantAuditEvent,
     PortalParticipantInvitation,
+    PortalPilotAllowlistEntry,
+    PortalPilotFeedback,
     PortalStateSnapshot,
     PortalUserAccount,
     async_database_runtime_check,
     async_session_for_current_database,
     persistence_enabled,
+)
+from sunterra_leg_portal.mail import (
+    production_smtp_enabled,
+    send_transactional_email,
 )
 
 
@@ -58,6 +73,24 @@ LOCAL_DEV_ORIGINS = [
 BASADINGEN_LEG_ID = "basadingen"
 BASADINGEN_LEG_NAME = "SunTerra LEG Basadingen"
 PARTICIPANT_BILLING_NOTICE = "Abrechnung und Inkasso bleiben bei Gemeinde/EW."
+ADMIN_MFA_ROLES = {Role.LEG_ADMIN, Role.PARTNER_ADMIN, Role.PLATFORM_ADMIN}
+TOTP_ISSUER = "SunTerra LEG"
+TOTP_PERIOD_SECONDS = 30
+TOTP_DIGITS = 6
+REQUIRED_PARTICIPANT_DOCUMENT_CONTEXT = "participant_onboarding"
+REQUIRED_PARTICIPANT_DOCUMENT_KEYS = (
+    "privacy_notice",
+    "portal_terms",
+    "leg_contract",
+)
+
+
+def _cors_allowed_origins() -> list[str]:
+    if os.environ.get("SUNTERRA_ENV") != "production":
+        return LOCAL_DEV_ORIGINS
+
+    configured = os.environ.get("SUNTERRA_ALLOWED_ORIGINS", "")
+    return [origin.strip() for origin in configured.split(",") if origin.strip()]
 
 
 class HealthStatus(BaseModel):
@@ -82,6 +115,20 @@ class ParticipantList(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+    totp_code: str | None = None
+
+
+class PasswordResetRequestCreate(BaseModel):
+    email: str
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    password: str
+
+
+class PasswordResetStatusRead(BaseModel):
+    status: str
 
 
 class AuthTokenResponse(BaseModel):
@@ -89,6 +136,11 @@ class AuthTokenResponse(BaseModel):
     token_type: str
     expires_in_seconds: int
     user: CurrentUser
+
+
+class TotpEnrollmentResponse(BaseModel):
+    secret: str
+    otpauth_url: str
 
 
 class UserAccountRead(BaseModel):
@@ -103,6 +155,16 @@ class UserAccountRead(BaseModel):
 class UserAccountRecord(UserAccountRead):
     password_hash: str | None = None
     password_salt: str | None = None
+    mfa_totp_secret: str | None = None
+    mfa_totp_enabled: bool = False
+
+
+class PasswordResetTokenRecord(BaseModel):
+    token: str
+    account_id: str
+    email: str
+    expires_at: str
+    used_at: str | None = None
 
 
 class UserAccountCreate(BaseModel):
@@ -142,6 +204,90 @@ class ParticipantInvitationCreate(BaseModel):
 class SelfServiceOnboardingCreate(BaseModel):
     email: str
     display_name: str | None = None
+    metering_point_id: str | None = None
+    street: str | None = None
+    postal_code: str | None = None
+    city: str | None = None
+
+
+class InterestRecordRead(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    status: str
+    created_at: str
+
+
+class PilotAllowlistCreate(BaseModel):
+    email: str
+
+
+class PilotAllowlistRead(BaseModel):
+    email: str
+    created_at: str
+
+
+class NetworkTopologyEntryCreate(BaseModel):
+    metering_point_id: str | None = None
+    street: str
+    postal_code: str
+    city: str
+
+
+class NetworkTopologyImportCreate(BaseModel):
+    source_name: str
+    entries: list[NetworkTopologyEntryCreate]
+
+
+class NetworkTopologyImportRead(BaseModel):
+    source_name: str
+    imported_entries: int
+    active_entries: int
+    imported_at: str
+
+
+class NetworkTopologyEntryRecord(BaseModel):
+    id: str
+    leg_id: str
+    source_name: str
+    metering_point_id: str | None = None
+    street: str
+    postal_code: str
+    city: str
+    active: bool
+    imported_at: str
+
+
+class PilotFeedbackCreate(BaseModel):
+    category: str
+    message: str
+    context: str | None = None
+
+
+class PilotFeedbackUpdate(BaseModel):
+    status: str
+    rollout_relevance: str | None = None
+    admin_note: str | None = None
+
+
+class PilotFeedbackRead(BaseModel):
+    id: str
+    category: str
+    message: str
+    context: str | None = None
+    user_id: str
+    user_email: str
+    user_role: Role
+    status: str
+    rollout_relevance: str | None = None
+    admin_note: str | None = None
+    reviewed_at: str | None = None
+    reviewed_by: str | None = None
+    created_at: str
+
+
+class PilotFeedbackRecord(PilotFeedbackRead):
+    pass
 
 
 class ParticipantInvitationRead(BaseModel):
@@ -174,6 +320,8 @@ class ParticipantRecord(BaseModel):
     email_verified: bool
     phone_number: str | None = None
     preferred_contact_channel: str = "email"
+    eligibility_status: str = "approved"
+    eligibility_review_reason: str | None = None
 
 
 class IdentityCheckpointRead(BaseModel):
@@ -204,7 +352,7 @@ class SelfServiceOnboardingResponse(BaseModel):
     participant_id: str
     participant_status: str
     identity_checkpoint: IdentityCheckpointRead
-    dev_email_verification_token: str
+    dev_email_verification_token: str | None
 
 
 class InvitationAcceptResponse(BaseModel):
@@ -226,7 +374,20 @@ class ParticipantMembershipRead(BaseModel):
     leg_id: str
     leg_name: str
     membership_status: str
+    eligibility_status: str
+    eligibility_review_reason: str | None = None
     billing_notice: str
+
+
+class EligibilityReviewDecision(BaseModel):
+    decision: str
+    reason: str
+
+
+class EligibilityReviewRead(BaseModel):
+    participant_id: str
+    eligibility_status: str
+    eligibility_review_reason: str | None = None
 
 
 class ParticipantContactChannelsUpdate(BaseModel):
@@ -357,6 +518,12 @@ class AdminMutationRequestRead(MutationRequestRecord):
 class MutationReviewDecision(BaseModel):
     decision: str
     reason: str | None = None
+
+
+class MutationPackageReadinessDecision(BaseModel):
+    ready: bool
+    reason: str
+    status: str | None = None
 
 
 class FileEvidenceCreate(BaseModel):
@@ -511,13 +678,29 @@ class PartnerTaskRead(BaseModel):
     record_count: int
 
 
+class AdminPartnerTaskMutationRead(BaseModel):
+    mutation_request_id: str
+    participant_id: str
+    mutation_type: str
+    effective_date: str
+
+
+class AdminPartnerTaskRead(PartnerTaskRead):
+    records: list[AdminPartnerTaskMutationRead]
+
+
 INVITATIONS: dict[str, ParticipantInvitationRecord] = {}
 COMMUNICATION_EVENTS: list[CommunicationEventRead] = []
 USER_ACCOUNTS: dict[str, UserAccountRecord] = {}
+PASSWORD_RESET_TOKENS: dict[str, PasswordResetTokenRecord] = {}
 PARTICIPANTS: dict[str, ParticipantRecord] = {}
 IDENTITY_VERIFICATIONS: dict[str, IdentityVerificationRead] = {}
 DOCUMENT_VERSIONS: dict[str, DocumentVersionRecord] = {}
 CONSENT_EVIDENCE: dict[str, list[ConsentEvidenceRead]] = {}
+INTEREST_RECORDS: dict[str, InterestRecordRead] = {}
+PILOT_ALLOWLIST: dict[str, PilotAllowlistRead] = {}
+NETWORK_TOPOLOGY_ENTRIES: dict[str, NetworkTopologyEntryRecord] = {}
+PILOT_FEEDBACK: dict[str, PilotFeedbackRecord] = {}
 MUTATION_REQUESTS: dict[str, list[MutationRequestRecord]] = {}
 PARTICIPANT_AUDIT_EVENTS: dict[str, list[AuditEventRead]] = {}
 FILE_EVIDENCE: dict[str, list[FileEvidenceRecord]] = {}
@@ -570,12 +753,284 @@ REGULAR_MUTATION_SUPPORT_ERROR = (
     "Only regular address, meter point, role, generation asset, entry, "
     "and exit mutations are supported"
 )
+PACKAGE_READY_MUTATION_STATUSES = {"approved", "package_ready"}
+NO_PACKAGE_READY_MUTATIONS_DETAIL = (
+    "No package-ready un-packaged mutation requests for quarter"
+)
 PORTAL_STATE_SNAPSHOT_ID = "default"
 DEFAULT_DEMO_PASSWORD = "SunTerra123!"
+PASSWORD_RESET_TOKEN_TTL_SECONDS = 60 * 60
+DEVELOPMENT_MFA_SATISFIED_ACCOUNT_IDS = {
+    "dev-leg-admin",
+    "dev-partner-admin",
+    "dev-platform-admin",
+}
 
 
 def legacy_portal_state_enabled() -> bool:
     return os.environ.get("SUNTERRA_ENABLE_LEGACY_PORTAL_STATE") == "1"
+
+
+def _normalized_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _registration_mode() -> str:
+    return os.environ.get("SUNTERRA_REGISTRATION_MODE", "public").strip().lower()
+
+
+def _pilot_registration_enabled() -> bool:
+    return _registration_mode() == "pilot"
+
+
+def _public_rollout_gate_incomplete() -> bool:
+    return (
+        os.environ.get("SUNTERRA_ENV") == "production"
+        and _registration_mode() == "public"
+        and os.environ.get("SUNTERRA_PUBLIC_ROLLOUT_APPROVED") != "1"
+    )
+
+
+def _env_pilot_allowlist() -> set[str]:
+    configured = os.environ.get("SUNTERRA_PILOT_ALLOWLIST_EMAILS", "")
+    return {
+        _normalized_email(email)
+        for email in configured.split(",")
+        if email.strip()
+    }
+
+
+def _email_has_pending_invitation(email: str) -> bool:
+    normalized_email = _normalized_email(email)
+    return any(
+        _normalized_email(invitation.email) == normalized_email
+        for invitation in INVITATIONS.values()
+    )
+
+
+def _email_is_pilot_allowed(email: str) -> bool:
+    normalized_email = _normalized_email(email)
+    return (
+        normalized_email in _env_pilot_allowlist()
+        or normalized_email in PILOT_ALLOWLIST
+        or _email_has_pending_invitation(email)
+    )
+
+
+async def _async_email_has_pending_invitation(
+    session: AsyncSession,
+    email: str,
+) -> bool:
+    normalized_email = _normalized_email(email)
+    rows = await _async_table_rows(session, PortalParticipantInvitation)
+    return any(_normalized_email(row.email) == normalized_email for row in rows)
+
+
+async def _async_email_is_pilot_allowed(
+    session: AsyncSession,
+    email: str,
+) -> bool:
+    normalized_email = _normalized_email(email)
+    if (
+        normalized_email in _env_pilot_allowlist()
+        or normalized_email in PILOT_ALLOWLIST
+        or _email_has_pending_invitation(email)
+    ):
+        return True
+
+    row = await session.get(PortalPilotAllowlistEntry, normalized_email)
+    if row is not None:
+        record = _pilot_allowlist_from_row(row)
+        PILOT_ALLOWLIST[record.email] = record
+        return True
+
+    return await _async_email_has_pending_invitation(session, email)
+
+
+def _interest_record_for(
+    onboarding_request: SelfServiceOnboardingCreate,
+) -> InterestRecordRead:
+    normalized_email = _normalized_email(onboarding_request.email)
+    existing = INTEREST_RECORDS.get(normalized_email)
+    if existing is not None:
+        return existing
+
+    record = InterestRecordRead(
+        id=uuid4().hex,
+        email=normalized_email,
+        display_name=onboarding_request.display_name or "Interessent",
+        status="interest_recorded",
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    INTEREST_RECORDS[normalized_email] = record
+    return record
+
+
+async def _async_interest_record_for(
+    session: AsyncSession,
+    onboarding_request: SelfServiceOnboardingCreate,
+) -> InterestRecordRead:
+    normalized_email = _normalized_email(onboarding_request.email)
+    row = await session.get(PortalInterestRecord, normalized_email)
+    if row is not None:
+        record = _interest_record_from_row(row)
+        INTEREST_RECORDS[record.email] = record
+        return record
+
+    record = _interest_record_for(onboarding_request)
+    session.add(_interest_record_row(record))
+    return record
+
+
+def _interest_record_from_row(row: PortalInterestRecord) -> InterestRecordRead:
+    return InterestRecordRead(
+        id=row.id,
+        email=row.email,
+        display_name=row.display_name,
+        status=row.status,
+        created_at=row.created_at,
+    )
+
+
+def _interest_record_row(record: InterestRecordRead) -> PortalInterestRecord:
+    return PortalInterestRecord(
+        id=record.id,
+        email=record.email,
+        display_name=record.display_name,
+        status=record.status,
+        created_at=record.created_at,
+    )
+
+
+def _pilot_allowlist_from_row(row: PortalPilotAllowlistEntry) -> PilotAllowlistRead:
+    return PilotAllowlistRead(email=row.email, created_at=row.created_at)
+
+
+def _pilot_allowlist_row(record: PilotAllowlistRead) -> PortalPilotAllowlistEntry:
+    return PortalPilotAllowlistEntry(
+        email=record.email,
+        created_at=record.created_at,
+    )
+
+
+def _normalized_topology_text(value: str | None) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _network_topology_entry_from_row(
+    row: PortalNetworkTopologyEntry,
+) -> NetworkTopologyEntryRecord:
+    return NetworkTopologyEntryRecord(
+        id=row.id,
+        leg_id=row.leg_id,
+        source_name=row.source_name,
+        metering_point_id=row.metering_point_id,
+        street=row.street,
+        postal_code=row.postal_code,
+        city=row.city,
+        active=row.active,
+        imported_at=row.imported_at,
+    )
+
+
+def _network_topology_entry_row(
+    record: NetworkTopologyEntryRecord,
+) -> PortalNetworkTopologyEntry:
+    return PortalNetworkTopologyEntry(
+        id=record.id,
+        leg_id=record.leg_id,
+        source_name=record.source_name,
+        metering_point_id=record.metering_point_id,
+        street=record.street,
+        postal_code=record.postal_code,
+        city=record.city,
+        active=record.active,
+        imported_at=record.imported_at,
+    )
+
+
+def _pilot_feedback_from_row(row: PortalPilotFeedback) -> PilotFeedbackRecord:
+    return PilotFeedbackRecord(
+        id=row.id,
+        category=row.category,
+        message=row.message,
+        context=row.context,
+        user_id=row.user_id,
+        user_email=row.user_email,
+        user_role=Role(row.user_role),
+        status=row.status,
+        rollout_relevance=row.rollout_relevance,
+        admin_note=row.admin_note,
+        reviewed_at=row.reviewed_at,
+        reviewed_by=row.reviewed_by,
+        created_at=row.created_at,
+    )
+
+
+def _pilot_feedback_row(record: PilotFeedbackRecord) -> PortalPilotFeedback:
+    return PortalPilotFeedback(
+        id=record.id,
+        category=record.category,
+        message=record.message,
+        context=record.context,
+        user_id=record.user_id,
+        user_email=record.user_email,
+        user_role=record.user_role.value,
+        status=record.status,
+        rollout_relevance=record.rollout_relevance,
+        admin_note=record.admin_note,
+        reviewed_at=record.reviewed_at,
+        reviewed_by=record.reviewed_by,
+        created_at=record.created_at,
+    )
+
+
+def _network_topology_match_from_entries(
+    onboarding_request: SelfServiceOnboardingCreate,
+    entries: list[NetworkTopologyEntryRecord],
+) -> NetworkTopologyEntryRecord | None:
+    metering_point_id = _normalized_topology_text(onboarding_request.metering_point_id)
+    street = _normalized_topology_text(onboarding_request.street)
+    postal_code = _normalized_topology_text(onboarding_request.postal_code)
+    city = _normalized_topology_text(onboarding_request.city)
+
+    for entry in sorted(entries, key=lambda item: (item.imported_at, item.id), reverse=True):
+        if not entry.active:
+            continue
+        if metering_point_id and metering_point_id == _normalized_topology_text(
+            entry.metering_point_id,
+        ):
+            return entry
+        if street and postal_code and city:
+            if (
+                street == _normalized_topology_text(entry.street)
+                and postal_code == _normalized_topology_text(entry.postal_code)
+                and city == _normalized_topology_text(entry.city)
+            ):
+                return entry
+
+    return None
+
+
+async def _async_network_topology_match(
+    session: AsyncSession,
+    onboarding_request: SelfServiceOnboardingCreate,
+) -> NetworkTopologyEntryRecord | None:
+    result = await session.execute(
+        select(PortalNetworkTopologyEntry).where(
+            PortalNetworkTopologyEntry.active == True,  # noqa: E712
+        ),
+    )
+    return _network_topology_match_from_entries(
+        onboarding_request,
+        [_network_topology_entry_from_row(row) for row in result.scalars().all()],
+    )
+
+
+def _eligibility_reason_for_topology_match(
+    match: NetworkTopologyEntryRecord,
+) -> str:
+    return f"Netzwerktopologie vorgeprueft: {match.source_name}"
 
 
 def _password_hash(password: str, salt: str) -> str:
@@ -629,11 +1084,116 @@ def _verify_account_password(account: UserAccountRecord, password: str) -> bool:
     )
 
 
+def _password_reset_record_for_account(
+    account: UserAccountRecord,
+) -> PasswordResetTokenRecord:
+    return PasswordResetTokenRecord(
+        token=secrets.token_urlsafe(32),
+        account_id=account.id,
+        email=_normalized_email(account.email),
+        expires_at=(
+            datetime.now(UTC) + timedelta(seconds=PASSWORD_RESET_TOKEN_TTL_SECONDS)
+        ).isoformat(),
+    )
+
+
+def _password_reset_token_valid(record: PasswordResetTokenRecord) -> bool:
+    return (
+        record.used_at is None
+        and datetime.fromisoformat(record.expires_at) > datetime.now(UTC)
+    )
+
+
+def _totp_secret() -> str:
+    return b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
+
+
+def _totp_key(secret: str) -> bytes:
+    normalized = secret.replace(" ", "").upper()
+    padding = "=" * (-len(normalized) % 8)
+    return b32decode(normalized + padding, casefold=True)
+
+
+def _totp_code(secret: str, timestamp: datetime) -> str:
+    counter = int(timestamp.timestamp()) // TOTP_PERIOD_SECONDS
+    digest = hmac.new(_totp_key(secret), struct.pack(">Q", counter), sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return f"{value % (10 ** TOTP_DIGITS):0{TOTP_DIGITS}d}"
+
+
+def _verify_totp_code(secret: str, code: str | None) -> bool:
+    if code is None:
+        return False
+    normalized_code = code.strip()
+    if not normalized_code.isdigit() or len(normalized_code) != TOTP_DIGITS:
+        return False
+
+    now = datetime.now(UTC)
+    return any(
+        secrets.compare_digest(
+            normalized_code,
+            _totp_code(
+                secret,
+                now + timedelta(seconds=TOTP_PERIOD_SECONDS * offset),
+            ),
+        )
+        for offset in (-1, 0, 1)
+    )
+
+
+def _account_requires_totp(account: UserAccountRecord) -> bool:
+    return (
+        account.role in ADMIN_MFA_ROLES
+        and account.mfa_totp_enabled
+        and account.mfa_totp_secret is not None
+    )
+
+
+def _login_mfa_satisfied(
+    account: UserAccountRecord,
+    credentials: LoginRequest,
+) -> bool:
+    if account.role not in ADMIN_MFA_ROLES:
+        return True
+    if _account_requires_totp(account):
+        return _verify_totp_code(account.mfa_totp_secret or "", credentials.totp_code)
+    return (
+        development_auth_enabled()
+        and account.id in DEVELOPMENT_MFA_SATISFIED_ACCOUNT_IDS
+    )
+
+
+def _totp_otpauth_url(account: UserAccountRecord) -> str:
+    label = f"{quote(TOTP_ISSUER)}:{quote(account.email)}"
+    issuer = quote(TOTP_ISSUER)
+    return (
+        f"otpauth://totp/{label}"
+        f"?secret={account.mfa_totp_secret}"
+        f"&issuer={issuer}"
+        "&algorithm=SHA1"
+        f"&digits={TOTP_DIGITS}"
+        f"&period={TOTP_PERIOD_SECONDS}"
+    )
+
+
 def _user_read(account: UserAccountRecord) -> UserAccountRead:
-    return UserAccountRead(**account.model_dump(exclude={"password_hash", "password_salt"}))
+    return UserAccountRead(
+        **account.model_dump(
+            exclude={
+                "password_hash",
+                "password_salt",
+                "mfa_totp_secret",
+                "mfa_totp_enabled",
+            },
+        ),
+    )
 
 
 async def _async_ensure_seed_user_accounts(session: AsyncSession) -> None:
+    if not development_auth_enabled():
+        return
+
     _ensure_seed_user_accounts()
     seed_added = False
     for user_id in [
@@ -700,10 +1260,14 @@ def _current_user_from_account(user_id: str) -> CurrentUser | None:
         email=account.email,
         display_name=account.display_name,
         role=account.role,
+        mfa_satisfied=False,
     )
 
 
 def _ensure_seed_user_accounts() -> None:
+    if not development_auth_enabled():
+        return
+
     seeds = [
         (
             "dev-participant",
@@ -772,7 +1336,9 @@ def _portal_state_payload() -> dict:
         "invitations": _dump_model_mapping(INVITATIONS),
         "communication_events": _dump_models(COMMUNICATION_EVENTS),
         "user_accounts": _dump_model_mapping(USER_ACCOUNTS),
+        "password_reset_tokens": _dump_model_mapping(PASSWORD_RESET_TOKENS),
         "participants": _dump_model_mapping(PARTICIPANTS),
+        "network_topology_entries": _dump_model_mapping(NETWORK_TOPOLOGY_ENTRIES),
         "identity_verifications": _dump_model_mapping(IDENTITY_VERIFICATIONS),
         "document_versions": _dump_model_mapping(DOCUMENT_VERSIONS),
         "consent_evidence": _dump_model_list_mapping(CONSENT_EVIDENCE),
@@ -823,8 +1389,24 @@ def _restore_portal_state_payload(payload: dict) -> None:
     USER_ACCOUNTS.clear()
     USER_ACCOUNTS.update(_load_model_mapping(payload, "user_accounts", UserAccountRecord))
     _ensure_seed_user_accounts()
+    PASSWORD_RESET_TOKENS.clear()
+    PASSWORD_RESET_TOKENS.update(
+        _load_model_mapping(
+            payload,
+            "password_reset_tokens",
+            PasswordResetTokenRecord,
+        ),
+    )
     PARTICIPANTS.clear()
     PARTICIPANTS.update(_load_model_mapping(payload, "participants", ParticipantRecord))
+    NETWORK_TOPOLOGY_ENTRIES.clear()
+    NETWORK_TOPOLOGY_ENTRIES.update(
+        _load_model_mapping(
+            payload,
+            "network_topology_entries",
+            NetworkTopologyEntryRecord,
+        ),
+    )
     IDENTITY_VERIFICATIONS.clear()
     IDENTITY_VERIFICATIONS.update(
         _load_model_mapping(
@@ -892,6 +1474,8 @@ def _participant_from_row(row: PortalParticipant) -> ParticipantRecord:
         email_verified=row.email_verified,
         phone_number=row.phone_number,
         preferred_contact_channel=row.preferred_contact_channel,
+        eligibility_status=getattr(row, "eligibility_status", "approved"),
+        eligibility_review_reason=getattr(row, "eligibility_review_reason", None),
     )
 
 
@@ -904,6 +1488,8 @@ def _participant_row(participant: ParticipantRecord) -> PortalParticipant:
         email_verified=participant.email_verified,
         phone_number=participant.phone_number,
         preferred_contact_channel=participant.preferred_contact_channel,
+        eligibility_status=participant.eligibility_status,
+        eligibility_review_reason=participant.eligibility_review_reason,
     )
 
 
@@ -1122,6 +1708,8 @@ def _user_account_from_row(row: PortalUserAccount) -> UserAccountRecord:
         organization=row.organization,
         password_hash=row.password_hash,
         password_salt=row.password_salt,
+        mfa_totp_secret=row.mfa_totp_secret,
+        mfa_totp_enabled=row.mfa_totp_enabled,
     )
 
 
@@ -1135,6 +1723,32 @@ def _user_account_row(account: UserAccountRecord) -> PortalUserAccount:
         organization=account.organization,
         password_hash=account.password_hash,
         password_salt=account.password_salt,
+        mfa_totp_secret=account.mfa_totp_secret,
+        mfa_totp_enabled=account.mfa_totp_enabled,
+    )
+
+
+def _password_reset_token_from_row(
+    row: PortalPasswordResetToken,
+) -> PasswordResetTokenRecord:
+    return PasswordResetTokenRecord(
+        token=row.token,
+        account_id=row.account_id,
+        email=row.email,
+        expires_at=row.expires_at,
+        used_at=row.used_at,
+    )
+
+
+def _password_reset_token_row(
+    token: PasswordResetTokenRecord,
+) -> PortalPasswordResetToken:
+    return PortalPasswordResetToken(
+        token=token.token,
+        account_id=token.account_id,
+        email=token.email,
+        expires_at=token.expires_at,
+        used_at=token.used_at,
     )
 
 
@@ -1185,8 +1799,10 @@ def _has_table_backed_onboarding_state(session: Session) -> bool:
         [
             PortalParticipantInvitation,
             PortalParticipant,
+            PortalNetworkTopologyEntry,
             PortalIdentityVerification,
             PortalUserAccount,
+            PortalPasswordResetToken,
             PortalCommunicationEvent,
         ],
     )
@@ -1239,6 +1855,14 @@ def _restore_table_backed_onboarding_state(session: Session) -> None:
         },
     )
 
+    NETWORK_TOPOLOGY_ENTRIES.clear()
+    NETWORK_TOPOLOGY_ENTRIES.update(
+        {
+            row.id: _network_topology_entry_from_row(row)
+            for row in session.exec(select(PortalNetworkTopologyEntry)).all()
+        },
+    )
+
     IDENTITY_VERIFICATIONS.clear()
     IDENTITY_VERIFICATIONS.update(
         {
@@ -1255,6 +1879,14 @@ def _restore_table_backed_onboarding_state(session: Session) -> None:
         },
     )
     _ensure_seed_user_accounts()
+
+    PASSWORD_RESET_TOKENS.clear()
+    PASSWORD_RESET_TOKENS.update(
+        {
+            row.token: _password_reset_token_from_row(row)
+            for row in session.exec(select(PortalPasswordResetToken)).all()
+        },
+    )
 
     DEV_PARTICIPANT_USERS.clear()
     for account in USER_ACCOUNTS.values():
@@ -1375,6 +2007,14 @@ def _save_table_backed_onboarding_state(session: Session) -> None:
     )
     _replace_table_rows(
         session,
+        PortalNetworkTopologyEntry,
+        [
+            _network_topology_entry_row(record)
+            for record in NETWORK_TOPOLOGY_ENTRIES.values()
+        ],
+    )
+    _replace_table_rows(
+        session,
         PortalIdentityVerification,
         [
             _identity_verification_row(verification)
@@ -1385,6 +2025,14 @@ def _save_table_backed_onboarding_state(session: Session) -> None:
         session,
         PortalUserAccount,
         [_user_account_row(account) for account in USER_ACCOUNTS.values()],
+    )
+    _replace_table_rows(
+        session,
+        PortalPasswordResetToken,
+        [
+            _password_reset_token_row(token)
+            for token in PASSWORD_RESET_TOKENS.values()
+        ],
     )
     _replace_table_rows(
         session,
@@ -1505,8 +2153,10 @@ async def _async_has_table_backed_onboarding_state(
         [
             PortalParticipantInvitation,
             PortalParticipant,
+            PortalNetworkTopologyEntry,
             PortalIdentityVerification,
             PortalUserAccount,
+            PortalPasswordResetToken,
             PortalCommunicationEvent,
         ],
     )
@@ -1517,7 +2167,9 @@ async def _async_restore_table_backed_onboarding_state(
 ) -> None:
     invitation_rows = await _async_table_rows(session, PortalParticipantInvitation)
     participant_rows = await _async_table_rows(session, PortalParticipant)
+    topology_rows = await _async_table_rows(session, PortalNetworkTopologyEntry)
     verification_rows = await _async_table_rows(session, PortalIdentityVerification)
+    password_reset_rows = await _async_table_rows(session, PortalPasswordResetToken)
     communication_rows = await _async_table_rows(session, PortalCommunicationEvent)
 
     INVITATIONS.clear()
@@ -1536,6 +2188,14 @@ async def _async_restore_table_backed_onboarding_state(
         },
     )
 
+    NETWORK_TOPOLOGY_ENTRIES.clear()
+    NETWORK_TOPOLOGY_ENTRIES.update(
+        {
+            row.id: _network_topology_entry_from_row(row)
+            for row in topology_rows
+        },
+    )
+
     IDENTITY_VERIFICATIONS.clear()
     IDENTITY_VERIFICATIONS.update(
         {
@@ -1545,6 +2205,14 @@ async def _async_restore_table_backed_onboarding_state(
     )
 
     await _async_restore_table_backed_user_account_state(session)
+
+    PASSWORD_RESET_TOKENS.clear()
+    PASSWORD_RESET_TOKENS.update(
+        {
+            row.token: _password_reset_token_from_row(row)
+            for row in password_reset_rows
+        },
+    )
 
     COMMUNICATION_EVENTS.clear()
     COMMUNICATION_EVENTS.extend(
@@ -1693,6 +2361,14 @@ async def _async_save_table_backed_onboarding_state(
     )
     await _async_replace_table_rows(
         session,
+        PortalNetworkTopologyEntry,
+        [
+            _network_topology_entry_row(record)
+            for record in NETWORK_TOPOLOGY_ENTRIES.values()
+        ],
+    )
+    await _async_replace_table_rows(
+        session,
         PortalIdentityVerification,
         [
             _identity_verification_row(verification)
@@ -1703,6 +2379,14 @@ async def _async_save_table_backed_onboarding_state(
         session,
         PortalUserAccount,
         [_user_account_row(account) for account in USER_ACCOUNTS.values()],
+    )
+    await _async_replace_table_rows(
+        session,
+        PortalPasswordResetToken,
+        [
+            _password_reset_token_row(token)
+            for token in PASSWORD_RESET_TOKENS.values()
+        ],
     )
     await _async_replace_table_rows(
         session,
@@ -1798,6 +2482,8 @@ def _uses_direct_table_backed_participant_route(path: str) -> bool:
     return (
         path in {
             "/api/auth/login",
+            "/api/auth/password-reset/request",
+            "/api/auth/password-reset/confirm",
             "/api/me",
             "/api/admin/users",
             "/api/admin/partner-admin-users",
@@ -1944,12 +2630,86 @@ def _document_hash(document: DocumentVersionCreate) -> str:
     return sha256(source.encode("utf-8")).hexdigest()
 
 
-def _current_document_version(document_key: str) -> DocumentVersionRecord | None:
+def _current_document_version(
+    document_key: str,
+    *,
+    context: str | None = None,
+) -> DocumentVersionRecord | None:
     for document in reversed(DOCUMENT_VERSIONS.values()):
-        if document.document_key == document_key:
+        if document.document_key == document_key and (
+            context is None or document.context == context
+        ):
             return document
 
     return None
+
+
+def _current_required_participant_documents() -> tuple[list[DocumentVersionRecord], list[str]]:
+    documents: list[DocumentVersionRecord] = []
+    missing_document_keys: list[str] = []
+    for document_key in REQUIRED_PARTICIPANT_DOCUMENT_KEYS:
+        document = _current_document_version(
+            document_key,
+            context=REQUIRED_PARTICIPANT_DOCUMENT_CONTEXT,
+        )
+        if document is None or document.context != REQUIRED_PARTICIPANT_DOCUMENT_CONTEXT:
+            missing_document_keys.append(document_key)
+            continue
+        documents.append(document)
+
+    if not documents:
+        return [], []
+
+    return documents, missing_document_keys
+
+
+def _raise_for_missing_required_documents(missing_document_keys: list[str]) -> None:
+    if missing_document_keys:
+        joined_keys = ", ".join(missing_document_keys)
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Required documents must be accepted before submitting binding "
+                f"mutations: {joined_keys}"
+            ),
+        )
+
+
+def _require_required_document_acceptance(participant: ParticipantRecord) -> None:
+    _raise_for_missing_required_documents(
+        _missing_required_document_keys(participant),
+    )
+
+
+def _require_eligibility_approved(participant: ParticipantRecord) -> None:
+    if participant.eligibility_status == "approved":
+        return
+    if participant.eligibility_status == "stopped":
+        raise HTTPException(
+            status_code=403,
+            detail="Network topology eligibility review stopped",
+        )
+    raise HTTPException(
+        status_code=403,
+        detail="Network topology eligibility review required",
+    )
+
+
+def _missing_required_document_keys(participant: ParticipantRecord) -> list[str]:
+    required_documents, missing_document_keys = _current_required_participant_documents()
+    if not required_documents:
+        return []
+
+    accepted_document_ids = {
+        consent.document_version_id
+        for consent in CONSENT_EVIDENCE.get(participant.id, [])
+        if consent.context == REQUIRED_PARTICIPANT_DOCUMENT_CONTEXT
+    }
+    return missing_document_keys + [
+        document.document_key
+        for document in required_documents
+        if document.id not in accepted_document_ids
+    ]
 
 
 def _participant_account_setup_completed(participant: ParticipantRecord) -> bool:
@@ -2034,6 +2794,72 @@ async def _async_verified_participant(
     return participant
 
 
+async def _async_current_required_participant_documents(
+    session: AsyncSession,
+) -> tuple[list[DocumentVersionRecord], list[str]]:
+    documents: list[DocumentVersionRecord] = []
+    missing_document_keys: list[str] = []
+    for document_key in REQUIRED_PARTICIPANT_DOCUMENT_KEYS:
+        result = await session.execute(
+            select(PortalDocumentVersion)
+            .where(
+                PortalDocumentVersion.document_key == document_key,
+                PortalDocumentVersion.context == REQUIRED_PARTICIPANT_DOCUMENT_CONTEXT,
+            )
+            .order_by(
+                PortalDocumentVersion.published_at.desc(),
+                PortalDocumentVersion.id.desc(),
+            )
+            .limit(1),
+        )
+        row = result.scalars().first()
+        if row is None:
+            missing_document_keys.append(document_key)
+            continue
+        documents.append(_document_version_from_row(row))
+
+    if not documents:
+        return [], []
+
+    return documents, missing_document_keys
+
+
+async def _async_require_required_document_acceptance(
+    session: AsyncSession,
+    participant: ParticipantRecord,
+) -> None:
+    _raise_for_missing_required_documents(
+        await _async_missing_required_document_keys(session, participant),
+    )
+
+
+async def _async_missing_required_document_keys(
+    session: AsyncSession,
+    participant: ParticipantRecord,
+) -> list[str]:
+    required_documents, missing_document_keys = (
+        await _async_current_required_participant_documents(session)
+    )
+    if not required_documents:
+        return []
+
+    result = await session.execute(
+        select(PortalConsentEvidence).where(
+            PortalConsentEvidence.participant_id == participant.id,
+            PortalConsentEvidence.context == REQUIRED_PARTICIPANT_DOCUMENT_CONTEXT,
+        ),
+    )
+    accepted_document_ids = {
+        row.document_version_id
+        for row in result.scalars().all()
+    }
+    return missing_document_keys + [
+        document.document_key
+        for document in required_documents
+        if document.id not in accepted_document_ids
+    ]
+
+
 def _email_verification_checkpoint(participant: ParticipantRecord) -> IdentityCheckpointRead:
     current_level = "email_verified" if participant.email_verified else "unverified"
 
@@ -2106,7 +2932,71 @@ def _record_identity_verification(
     return record
 
 
-def _queue_email_event(event_type: str, recipient_email: str) -> CommunicationEventRead:
+def _public_url(path: str) -> str:
+    base_url = os.environ.get("SUNTERRA_PUBLIC_BASE_URL", "").rstrip("/")
+    return f"{base_url}{path}" if base_url else path
+
+
+def _email_message_for_event(
+    event_type: str,
+    *,
+    invitation_token: str | None = None,
+    verification_token: str | None = None,
+    password_reset_token: str | None = None,
+) -> tuple[str, str]:
+    if event_type == "participant_invitation":
+        invitation_url = (
+            _public_url(f"/api/auth/invitations/{invitation_token}/accept")
+            if invitation_token
+            else None
+        )
+        body = "Sie wurden zum SunTerra LEG Portal eingeladen."
+        if invitation_url:
+            body = f"{body}\n\n{invitation_url}"
+        return (
+            "SunTerra LEG Einladung",
+            body,
+        )
+    if event_type == "email_verification":
+        verification_url = (
+            _public_url(f"/api/auth/email-verifications/{verification_token}/verify")
+            if verification_token
+            else None
+        )
+        body = "Bitte verifizieren Sie Ihre E-Mail-Adresse im SunTerra LEG Portal."
+        if verification_url:
+            body = f"{body}\n\n{verification_url}"
+        return (
+            "SunTerra LEG E-Mail-Verifikation",
+            body,
+        )
+    if event_type == "password_reset":
+        reset_url = (
+            _public_url(f"/reset-password?token={password_reset_token}")
+            if password_reset_token
+            else None
+        )
+        body = "Sie koennen Ihr Passwort im SunTerra LEG Portal zuruecksetzen."
+        if reset_url:
+            body = f"{body}\n\n{reset_url}"
+        return (
+            "SunTerra LEG Passwort zuruecksetzen",
+            body,
+        )
+    return (
+        "SunTerra LEG Portal",
+        "Im SunTerra LEG Portal liegt eine neue Nachricht fuer Sie vor.",
+    )
+
+
+def _queue_email_event(
+    event_type: str,
+    recipient_email: str,
+    *,
+    invitation_token: str | None = None,
+    verification_token: str | None = None,
+    password_reset_token: str | None = None,
+) -> CommunicationEventRead:
     event = CommunicationEventRead(
         id=uuid4().hex,
         channel="email",
@@ -2116,16 +3006,46 @@ def _queue_email_event(event_type: str, recipient_email: str) -> CommunicationEv
         created_at=datetime.now(UTC).isoformat(),
     )
     COMMUNICATION_EVENTS.append(event)
+    if production_smtp_enabled():
+        subject, body = _email_message_for_event(
+            event_type,
+            invitation_token=invitation_token,
+            verification_token=verification_token,
+            password_reset_token=password_reset_token,
+        )
+        try:
+            send_transactional_email(
+                recipient_email=recipient_email,
+                subject=subject,
+                body=body,
+            )
+        except Exception:
+            event.status = "failed"
+            return event
+        event.status = "sent"
 
     return event
 
 
 def _participant_membership_read(
     participant: ParticipantRecord,
+    *,
+    missing_required_document_keys: list[str] | None = None,
 ) -> ParticipantMembershipRead:
-    membership_status = (
-        "active" if participant.email_verified else "pending_email_verification"
-    )
+    if not participant.email_verified:
+        membership_status = "pending_email_verification"
+    elif participant.eligibility_status == "stopped":
+        membership_status = "eligibility_stopped"
+    elif participant.eligibility_status != "approved":
+        membership_status = "pending_eligibility_review"
+    elif (
+        missing_required_document_keys
+        if missing_required_document_keys is not None
+        else _missing_required_document_keys(participant)
+    ):
+        membership_status = "pending_required_documents"
+    else:
+        membership_status = "active"
 
     return ParticipantMembershipRead(
         participant_id=participant.id,
@@ -2134,6 +3054,8 @@ def _participant_membership_read(
         leg_id=participant.leg_id,
         leg_name=BASADINGEN_LEG_NAME,
         membership_status=membership_status,
+        eligibility_status=participant.eligibility_status,
+        eligibility_review_reason=participant.eligibility_review_reason,
         billing_notice=PARTICIPANT_BILLING_NOTICE,
     )
 
@@ -2409,6 +3331,69 @@ def _apply_mutation_review_decision(
     return mutation_request
 
 
+def _apply_mutation_package_readiness(
+    mutation_request: MutationRequestRecord,
+    decision: MutationPackageReadinessDecision,
+    user: CurrentUser,
+) -> MutationRequestRecord:
+    if mutation_request.mutation_type == "entry":
+        raise HTTPException(
+            status_code=400,
+            detail="Entry mutations require LEG approval before package readiness",
+        )
+    if mutation_request.status != "submitted":
+        raise HTTPException(
+            status_code=400,
+            detail="Mutation request has already been reviewed",
+        )
+    reason = decision.reason.strip()
+    if not reason:
+        raise HTTPException(
+            status_code=400,
+            detail="Package readiness check requires a reason",
+        )
+
+    from_status = mutation_request.status
+    reviewed_at = datetime.now(UTC).isoformat()
+    if decision.ready:
+        to_status = "package_ready"
+    else:
+        to_status = (decision.status or "needs_clarification").strip()
+        if to_status not in {"needs_clarification", "stopped_invalid"}:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Package readiness stop status must be "
+                    "needs_clarification or stopped_invalid"
+                ),
+            )
+    mutation_request.status = to_status
+    mutation_request.reviewed_at = reviewed_at
+    mutation_request.review_reason = reason
+    mutation_request.audit_events.append(
+        AuditEventRead(
+            id=uuid4().hex,
+            action=f"mutation_request.{to_status}",
+            actor_role=user.role.value,
+            created_at=reviewed_at,
+            from_status=from_status,
+            to_status=to_status,
+            reason=reason,
+        ),
+    )
+
+    return mutation_request
+
+
+def _mutation_request_is_package_ready(
+    mutation_request: MutationRequestRecord,
+) -> bool:
+    return mutation_request.status == "package_ready" or (
+        mutation_request.status == "approved"
+        and mutation_request.mutation_type == "entry"
+    )
+
+
 def _admin_mutation_request_read_with_participant(
     mutation_request: MutationRequestRecord,
     participant: ParticipantRecord,
@@ -2653,6 +3638,24 @@ def _partner_task_read(
     )
 
 
+def _admin_partner_task_read(
+    package: MutationPackageRead,
+    status_event: MutableMutationPackageStatusEvent,
+) -> AdminPartnerTaskRead:
+    return AdminPartnerTaskRead(
+        **_partner_task_read(package, status_event).model_dump(),
+        records=[
+            AdminPartnerTaskMutationRead(
+                mutation_request_id=record.mutation_request_id,
+                participant_id=record.participant_id,
+                mutation_type=record.mutation_type,
+                effective_date=record.effective_date,
+            )
+            for record in package.records
+        ],
+    )
+
+
 def _build_mutation_package(
     *,
     quarter: str,
@@ -2871,7 +3874,7 @@ def _mutation_package_pdf(package: MutationPackageRead) -> bytes:
 app = FastAPI(title="SunTerra LEG Portal", version="0.1.0", lifespan=production_lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=LOCAL_DEV_ORIGINS,
+    allow_origins=_cors_allowed_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2961,18 +3964,162 @@ async def login(credentials: LoginRequest) -> AuthTokenResponse:
         or not _verify_account_password(account, credentials.password)
     ):
         raise HTTPException(status_code=401, detail="Invalid login credentials")
+    if _account_requires_totp(account) and not _verify_totp_code(
+        account.mfa_totp_secret or "",
+        credentials.totp_code,
+    ):
+        raise HTTPException(status_code=401, detail="Valid TOTP code required")
 
     user = CurrentUser(
         id=account.id,
         email=account.email,
         display_name=account.display_name,
         role=account.role,
+        mfa_satisfied=_login_mfa_satisfied(account, credentials),
     )
     return AuthTokenResponse(
         access_token=create_access_token(user),
         token_type="bearer",
         expires_in_seconds=JWT_ACCESS_TOKEN_SECONDS,
         user=user,
+    )
+
+
+@app.post(
+    "/api/auth/password-reset/request",
+    response_model=PasswordResetStatusRead,
+    status_code=202,
+)
+async def request_password_reset(
+    reset_request: PasswordResetRequestCreate,
+) -> PasswordResetStatusRead:
+    normalized_email = _normalized_email(reset_request.email)
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            account = await _async_user_account_by_email(session, normalized_email)
+            if account is not None and account.active:
+                reset_token = _password_reset_record_for_account(account)
+                event = _queue_email_event(
+                    "password_reset",
+                    account.email,
+                    password_reset_token=reset_token.token,
+                )
+                session.add(_communication_event_row(event))
+                if event.status != "failed":
+                    session.add(_password_reset_token_row(reset_token))
+                    PASSWORD_RESET_TOKENS[reset_token.token] = reset_token
+                await session.commit()
+            return PasswordResetStatusRead(status="password_reset_requested")
+
+    _ensure_seed_user_accounts()
+    account = next(
+        (
+            candidate
+            for candidate in USER_ACCOUNTS.values()
+            if _normalized_email(candidate.email) == normalized_email
+        ),
+        None,
+    )
+    if account is not None and account.active:
+        reset_token = _password_reset_record_for_account(account)
+        event = _queue_email_event(
+            "password_reset",
+            account.email,
+            password_reset_token=reset_token.token,
+        )
+        if event.status != "failed":
+            PASSWORD_RESET_TOKENS[reset_token.token] = reset_token
+
+    return PasswordResetStatusRead(status="password_reset_requested")
+
+
+@app.post(
+    "/api/auth/password-reset/confirm",
+    response_model=PasswordResetStatusRead,
+)
+async def confirm_password_reset(
+    confirmation: PasswordResetConfirm,
+) -> PasswordResetStatusRead:
+    used_at = datetime.now(UTC).isoformat()
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            token_row = await session.get(PortalPasswordResetToken, confirmation.token)
+            if token_row is None:
+                raise HTTPException(status_code=400, detail="Invalid password reset token")
+            reset_token = _password_reset_token_from_row(token_row)
+            if not _password_reset_token_valid(reset_token):
+                raise HTTPException(status_code=400, detail="Invalid password reset token")
+            account_row = await session.get(PortalUserAccount, reset_token.account_id)
+            if account_row is None or not account_row.active:
+                raise HTTPException(status_code=400, detail="Invalid password reset token")
+            account = _user_account_from_row(account_row)
+            _set_account_password(account, confirmation.password)
+            token_row.used_at = used_at
+            reset_token.used_at = used_at
+            PASSWORD_RESET_TOKENS[reset_token.token] = reset_token
+            await session.merge(_user_account_row(account))
+            await session.merge(token_row)
+            await session.commit()
+            USER_ACCOUNTS[account.id] = account
+            return PasswordResetStatusRead(status="password_reset_completed")
+
+    reset_token = PASSWORD_RESET_TOKENS.get(confirmation.token)
+    if reset_token is None or not _password_reset_token_valid(reset_token):
+        raise HTTPException(status_code=400, detail="Invalid password reset token")
+    account = USER_ACCOUNTS.get(reset_token.account_id)
+    if account is None or not account.active:
+        raise HTTPException(status_code=400, detail="Invalid password reset token")
+    _set_account_password(account, confirmation.password)
+    reset_token.used_at = used_at
+    PASSWORD_RESET_TOKENS[reset_token.token] = reset_token
+    USER_ACCOUNTS[account.id] = account
+
+    return PasswordResetStatusRead(status="password_reset_completed")
+
+
+@app.post(
+    "/api/auth/mfa/totp/enroll",
+    response_model=TotpEnrollmentResponse,
+    status_code=201,
+)
+async def enroll_totp_mfa(
+    user: CurrentUser = Depends(
+        require_roles_before_mfa(
+            Role.LEG_ADMIN,
+            Role.PARTNER_ADMIN,
+            Role.PLATFORM_ADMIN,
+        ),
+    ),
+) -> TotpEnrollmentResponse:
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            account = await _async_user_account_by_id(session, user.id)
+            if account is None:
+                raise HTTPException(status_code=404, detail="User account not found")
+            if _account_requires_totp(account) and not user.mfa_satisfied:
+                raise HTTPException(status_code=403, detail="Admin MFA required")
+            account.mfa_totp_secret = _totp_secret()
+            account.mfa_totp_enabled = True
+            await session.merge(_user_account_row(account))
+            await session.commit()
+            return TotpEnrollmentResponse(
+                secret=account.mfa_totp_secret,
+                otpauth_url=_totp_otpauth_url(account),
+            )
+
+    _ensure_seed_user_accounts()
+    account = USER_ACCOUNTS.get(user.id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="User account not found")
+    if _account_requires_totp(account) and not user.mfa_satisfied:
+        raise HTTPException(status_code=403, detail="Admin MFA required")
+    account.mfa_totp_secret = _totp_secret()
+    account.mfa_totp_enabled = True
+    USER_ACCOUNTS[account.id] = account
+
+    return TotpEnrollmentResponse(
+        secret=account.mfa_totp_secret,
+        otpauth_url=_totp_otpauth_url(account),
     )
 
 
@@ -3272,7 +4419,11 @@ async def create_participant_invitation(
         status="pending_email_verification",
     )
     INVITATIONS[record.token] = record
-    event = _queue_email_event("participant_invitation", record.email)
+    event = _queue_email_event(
+        "participant_invitation",
+        record.email,
+        invitation_token=record.token,
+    )
 
     if persistence_enabled():
         async with async_session_for_current_database() as session:
@@ -3285,7 +4436,251 @@ async def create_participant_invitation(
             )
             await session.commit()
 
+    if event.status == "failed":
+        raise HTTPException(
+            status_code=503,
+            detail="Email delivery failed",
+        )
+
     return _participant_invitation_read(record)
+
+
+@app.get(
+    "/api/admin/interest-records",
+    response_model=list[InterestRecordRead],
+)
+async def admin_interest_records(
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> list[InterestRecordRead]:
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            rows = await _async_table_rows(session, PortalInterestRecord)
+            records = [_interest_record_from_row(row) for row in rows]
+            INTEREST_RECORDS.clear()
+            INTEREST_RECORDS.update({record.email: record for record in records})
+            return sorted(
+                records,
+                key=lambda record: (record.created_at, record.email),
+            )
+
+    return sorted(
+        INTEREST_RECORDS.values(),
+        key=lambda record: (record.created_at, record.email),
+    )
+
+
+@app.post(
+    "/api/pilot-feedback",
+    response_model=PilotFeedbackRead,
+    status_code=201,
+)
+async def submit_pilot_feedback(
+    feedback: PilotFeedbackCreate,
+    user: CurrentUser = Depends(current_user),
+) -> PilotFeedbackRead:
+    category = feedback.category.strip()
+    message = feedback.message.strip()
+    context = feedback.context.strip() if feedback.context is not None else None
+    if not category:
+        raise HTTPException(status_code=400, detail="Feedback category required")
+    if not message:
+        raise HTTPException(status_code=400, detail="Feedback message required")
+
+    record = PilotFeedbackRecord(
+        id=uuid4().hex,
+        category=category,
+        message=message,
+        context=context or None,
+        user_id=user.id,
+        user_email=user.email,
+        user_role=user.role,
+        status="submitted",
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    PILOT_FEEDBACK[record.id] = record
+
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            session.add(_pilot_feedback_row(record))
+            await session.commit()
+
+    return record
+
+
+@app.get(
+    "/api/admin/pilot-feedback",
+    response_model=list[PilotFeedbackRead],
+)
+async def admin_pilot_feedback(
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> list[PilotFeedbackRead]:
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            result = await session.execute(select(PortalPilotFeedback))
+            return [
+                _pilot_feedback_from_row(row)
+                for row in sorted(
+                    result.scalars().all(),
+                    key=lambda item: (item.created_at, item.id),
+                )
+            ]
+
+    return sorted(
+        PILOT_FEEDBACK.values(),
+        key=lambda record: (record.created_at, record.id),
+    )
+
+
+@app.patch(
+    "/api/admin/pilot-feedback/{feedback_id}",
+    response_model=PilotFeedbackRead,
+)
+async def update_pilot_feedback_review(
+    feedback_id: str,
+    feedback_update: PilotFeedbackUpdate,
+    user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> PilotFeedbackRead:
+    status = feedback_update.status.strip()
+    rollout_relevance = (
+        feedback_update.rollout_relevance.strip()
+        if feedback_update.rollout_relevance is not None
+        else None
+    )
+    admin_note = (
+        feedback_update.admin_note.strip()
+        if feedback_update.admin_note is not None
+        else None
+    )
+    if not status:
+        raise HTTPException(status_code=400, detail="Feedback status required")
+
+    reviewed_at = datetime.now(UTC).isoformat()
+
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            row = await session.get(PortalPilotFeedback, feedback_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="Pilot feedback not found")
+            row.status = status
+            row.rollout_relevance = rollout_relevance or None
+            row.admin_note = admin_note or None
+            row.reviewed_at = reviewed_at
+            row.reviewed_by = user.id
+            await session.commit()
+            await session.refresh(row)
+            record = _pilot_feedback_from_row(row)
+            PILOT_FEEDBACK[record.id] = record
+            return record
+
+    record = PILOT_FEEDBACK.get(feedback_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Pilot feedback not found")
+    updated = record.model_copy(
+        update={
+            "status": status,
+            "rollout_relevance": rollout_relevance or None,
+            "admin_note": admin_note or None,
+            "reviewed_at": reviewed_at,
+            "reviewed_by": user.id,
+        }
+    )
+    PILOT_FEEDBACK[updated.id] = updated
+    return updated
+
+
+@app.post(
+    "/api/admin/pilot-allowlist",
+    response_model=PilotAllowlistRead,
+    status_code=201,
+)
+async def allow_pilot_email(
+    allowlist_entry: PilotAllowlistCreate,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> PilotAllowlistRead:
+    normalized_email = _normalized_email(allowlist_entry.email)
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            row = await session.get(PortalPilotAllowlistEntry, normalized_email)
+            if row is not None:
+                record = _pilot_allowlist_from_row(row)
+                PILOT_ALLOWLIST[record.email] = record
+                return record
+
+            record = PilotAllowlistRead(
+                email=normalized_email,
+                created_at=datetime.now(UTC).isoformat(),
+            )
+            session.add(_pilot_allowlist_row(record))
+            await session.commit()
+            PILOT_ALLOWLIST[normalized_email] = record
+            return record
+
+    existing = PILOT_ALLOWLIST.get(normalized_email)
+    if existing is not None:
+        return existing
+
+    record = PilotAllowlistRead(
+        email=normalized_email,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    PILOT_ALLOWLIST[normalized_email] = record
+    return record
+
+
+@app.post(
+    "/api/admin/network-topology-entries",
+    response_model=NetworkTopologyImportRead,
+    status_code=201,
+)
+async def import_network_topology_entries(
+    topology_import: NetworkTopologyImportCreate,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> NetworkTopologyImportRead:
+    source_name = topology_import.source_name.strip()
+    if not source_name:
+        raise HTTPException(status_code=400, detail="Network topology source required")
+    if not topology_import.entries:
+        raise HTTPException(status_code=400, detail="Network topology entries required")
+
+    imported_at = datetime.now(UTC).isoformat()
+    for record in NETWORK_TOPOLOGY_ENTRIES.values():
+        record.active = False
+
+    records = [
+        NetworkTopologyEntryRecord(
+            id=uuid4().hex,
+            leg_id=BASADINGEN_LEG_ID,
+            source_name=source_name,
+            metering_point_id=entry.metering_point_id,
+            street=entry.street,
+            postal_code=entry.postal_code,
+            city=entry.city,
+            active=True,
+            imported_at=imported_at,
+        )
+        for entry in topology_import.entries
+    ]
+    for record in records:
+        NETWORK_TOPOLOGY_ENTRIES[record.id] = record
+
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            existing_result = await session.execute(
+                select(PortalNetworkTopologyEntry).where(
+                    PortalNetworkTopologyEntry.active == True,  # noqa: E712
+                ),
+            )
+            for existing in existing_result.scalars().all():
+                existing.active = False
+            session.add_all([_network_topology_entry_row(record) for record in records])
+            await session.commit()
+
+    return NetworkTopologyImportRead(
+        source_name=source_name,
+        imported_entries=len(records),
+        active_entries=len(records),
+        imported_at=imported_at,
+    )
 
 
 @app.post(
@@ -3295,17 +4690,54 @@ async def create_participant_invitation(
 )
 async def create_self_service_onboarding_request(
     onboarding_request: SelfServiceOnboardingCreate,
-) -> SelfServiceOnboardingResponse:
+) -> SelfServiceOnboardingResponse | JSONResponse:
     _ensure_seed_user_accounts()
+    if _public_rollout_gate_incomplete():
+        raise HTTPException(status_code=403, detail="Public rollout gate incomplete")
+    if _pilot_registration_enabled():
+        pilot_allowed = _email_is_pilot_allowed(onboarding_request.email)
+        if not pilot_allowed and persistence_enabled():
+            async with async_session_for_current_database() as session:
+                pilot_allowed = await _async_email_is_pilot_allowed(
+                    session,
+                    onboarding_request.email,
+                )
+                if not pilot_allowed:
+                    interest_record = await _async_interest_record_for(
+                        session,
+                        onboarding_request,
+                    )
+                    await session.commit()
+                    return JSONResponse(
+                        status_code=202,
+                        content=interest_record.model_dump(mode="json"),
+                    )
+        if not pilot_allowed:
+            interest_record = _interest_record_for(onboarding_request)
+            return JSONResponse(
+                status_code=202,
+                content=interest_record.model_dump(mode="json"),
+            )
+
     participant_id = uuid4().hex
     verification_token = uuid4().hex
     initial_display_name = onboarding_request.display_name or "Teilnehmer"
+    topology_match = _network_topology_match_from_entries(
+        onboarding_request,
+        list(NETWORK_TOPOLOGY_ENTRIES.values()),
+    )
     participant = ParticipantRecord(
         id=participant_id,
         email=onboarding_request.email,
         display_name=initial_display_name,
         leg_id=BASADINGEN_LEG_ID,
         email_verified=False,
+        eligibility_status="approved" if topology_match is not None else "pending_review",
+        eligibility_review_reason=(
+            _eligibility_reason_for_topology_match(topology_match)
+            if topology_match is not None
+            else None
+        ),
     )
     PARTICIPANTS[participant.id] = participant
     invitation = ParticipantInvitationRecord(
@@ -3335,9 +4767,24 @@ async def create_self_service_onboarding_request(
         participant,
         source="self_service_onboarding",
     )
-    event = _queue_email_event("email_verification", participant.email)
+    event = _queue_email_event(
+        "email_verification",
+        participant.email,
+        verification_token=verification_token,
+    )
     if persistence_enabled():
         async with async_session_for_current_database() as session:
+            if topology_match is None:
+                topology_match = await _async_network_topology_match(
+                    session,
+                    onboarding_request,
+                )
+                if topology_match is not None:
+                    participant.eligibility_status = "approved"
+                    participant.eligibility_review_reason = (
+                        _eligibility_reason_for_topology_match(topology_match)
+                    )
+                    PARTICIPANTS[participant.id] = participant
             await _async_merge_rows(
                 session,
                 [
@@ -3349,6 +4796,11 @@ async def create_self_service_onboarding_request(
                 ],
             )
             await session.commit()
+    if event.status == "failed":
+        raise HTTPException(
+            status_code=503,
+            detail="Email delivery failed",
+        )
     user = CurrentUser(
         id=participant.id,
         email=participant.email,
@@ -3362,7 +4814,9 @@ async def create_self_service_onboarding_request(
         participant_id=participant.id,
         participant_status="pending_email_verification",
         identity_checkpoint=_identity_checkpoint(participant),
-        dev_email_verification_token=verification_token,
+        dev_email_verification_token=(
+            verification_token if development_auth_enabled() else None
+        ),
     )
 
 
@@ -3518,6 +4972,91 @@ async def admin_participant_identity_verification(
 
 
 @app.post(
+    "/api/admin/participants/{participant_id}/eligibility-review",
+    response_model=EligibilityReviewRead,
+)
+async def review_participant_eligibility(
+    participant_id: str,
+    review: EligibilityReviewDecision,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> EligibilityReviewRead:
+    if review.decision not in {"approved", "stopped"}:
+        raise HTTPException(status_code=400, detail="Unsupported eligibility decision")
+    reason = review.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Eligibility review reason required")
+
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            participant_row = await session.get(PortalParticipant, participant_id)
+            if participant_row is None:
+                raise HTTPException(status_code=404, detail="Participant not found")
+            participant = _participant_from_row(participant_row)
+            participant.eligibility_status = review.decision
+            participant.eligibility_review_reason = reason
+            await session.merge(_participant_row(participant))
+            await session.commit()
+            PARTICIPANTS[participant.id] = participant
+            return EligibilityReviewRead(
+                participant_id=participant.id,
+                eligibility_status=participant.eligibility_status,
+                eligibility_review_reason=participant.eligibility_review_reason,
+            )
+
+    participant = PARTICIPANTS.get(participant_id)
+    if participant is None:
+        raise HTTPException(status_code=404, detail="Participant not found")
+    participant.eligibility_status = review.decision
+    participant.eligibility_review_reason = reason
+    PARTICIPANTS[participant.id] = participant
+    return EligibilityReviewRead(
+        participant_id=participant.id,
+        eligibility_status=participant.eligibility_status,
+        eligibility_review_reason=participant.eligibility_review_reason,
+    )
+
+
+@app.get(
+    "/api/admin/participants/{participant_id}/consent-evidence",
+    response_model=list[ConsentEvidenceRead],
+)
+async def admin_participant_consent_evidence(
+    participant_id: str,
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN, Role.PLATFORM_ADMIN)),
+) -> list[ConsentEvidenceRead]:
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            participant_row = await session.get(PortalParticipant, participant_id)
+            if participant_row is None:
+                raise HTTPException(status_code=404, detail="Participant not found")
+            result = await session.execute(
+                select(PortalConsentEvidence)
+                .where(PortalConsentEvidence.participant_id == participant_id)
+                .order_by(
+                    PortalConsentEvidence.accepted_at,
+                    PortalConsentEvidence.document_key,
+                    PortalConsentEvidence.document_version_id,
+                ),
+            )
+            return [
+                _consent_evidence_from_row(row)
+                for row in result.scalars().all()
+            ]
+
+    if participant_id not in PARTICIPANTS:
+        raise HTTPException(status_code=404, detail="Participant not found")
+
+    return sorted(
+        CONSENT_EVIDENCE.get(participant_id, []),
+        key=lambda evidence: (
+            evidence.accepted_at,
+            evidence.document_key,
+            evidence.document_version_id,
+        ),
+    )
+
+
+@app.post(
     "/api/admin/mutation-requests/{mutation_request_id}/review-decision",
     response_model=AdminMutationRequestRead,
 )
@@ -3551,6 +5090,47 @@ async def review_mutation_request(
             )
 
     mutation_request = _apply_mutation_review_decision(
+        _find_mutation_request(mutation_request_id),
+        decision,
+        user,
+    )
+    return _admin_mutation_request_read(mutation_request)
+
+
+@app.post(
+    "/api/admin/mutation-requests/{mutation_request_id}/package-readiness",
+    response_model=AdminMutationRequestRead,
+)
+async def check_mutation_package_readiness(
+    mutation_request_id: str,
+    decision: MutationPackageReadinessDecision,
+    user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN)),
+) -> AdminMutationRequestRead:
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            row = await session.get(PortalMutationRequest, mutation_request_id)
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Mutation request not found",
+                )
+            participant_row = await session.get(PortalParticipant, row.participant_id)
+            if participant_row is None:
+                raise HTTPException(status_code=404, detail="Participant not found")
+
+            mutation_request = _apply_mutation_package_readiness(
+                _mutation_request_from_row(row),
+                decision,
+                user,
+            )
+            await session.merge(_mutation_request_row(mutation_request))
+            await session.commit()
+            return _admin_mutation_request_read_with_participant(
+                mutation_request,
+                _participant_from_row(participant_row),
+            )
+
+    mutation_request = _apply_mutation_package_readiness(
         _find_mutation_request(mutation_request_id),
         decision,
         user,
@@ -3706,7 +5286,7 @@ async def create_mutation_package(
             result = await session.execute(
                 select(PortalMutationRequest).where(
                     PortalMutationRequest.leg_id == BASADINGEN_LEG_ID,
-                    PortalMutationRequest.status == "approved",
+                    PortalMutationRequest.status.in_(PACKAGE_READY_MUTATION_STATUSES),
                 ),
             )
             approved_requests = sorted(
@@ -3717,6 +5297,7 @@ async def create_mutation_package(
                         for row in result.scalars().all()
                     )
                     if mutation_request.quarter == package.quarter
+                    and _mutation_request_is_package_ready(mutation_request)
                     and mutation_request.id not in packaged_request_ids
                 ],
                 key=lambda mutation_request: (
@@ -3727,7 +5308,7 @@ async def create_mutation_package(
             if not approved_requests:
                 raise HTTPException(
                     status_code=400,
-                    detail="No approved un-packaged mutation requests for quarter",
+                    detail=NO_PACKAGE_READY_MUTATIONS_DETAIL,
                 )
 
             mutation_package = _build_mutation_package(
@@ -3755,7 +5336,7 @@ async def create_mutation_package(
                 await session.rollback()
                 raise HTTPException(
                     status_code=400,
-                    detail="No approved un-packaged mutation requests for quarter",
+                    detail=NO_PACKAGE_READY_MUTATIONS_DETAIL,
                 ) from error
 
             return mutation_package
@@ -3766,7 +5347,8 @@ async def create_mutation_package(
             for participant_requests in MUTATION_REQUESTS.values()
             for mutation_request in participant_requests
             if mutation_request.leg_id == BASADINGEN_LEG_ID
-            and mutation_request.status == "approved"
+            and mutation_request.status in PACKAGE_READY_MUTATION_STATUSES
+            and _mutation_request_is_package_ready(mutation_request)
             and mutation_request.quarter == package.quarter
             and mutation_request.id not in PACKAGED_MUTATION_REQUEST_IDS
         ],
@@ -3778,7 +5360,7 @@ async def create_mutation_package(
     if not approved_requests:
         raise HTTPException(
             status_code=400,
-            detail="No approved un-packaged mutation requests for quarter",
+            detail=NO_PACKAGE_READY_MUTATIONS_DETAIL,
         )
 
     mutation_package = _build_mutation_package(
@@ -3939,6 +5521,42 @@ async def partner_member_register(
             )
         ],
     )
+
+
+@app.get(
+    "/api/admin/partner-tasks",
+    response_model=list[AdminPartnerTaskRead],
+)
+async def admin_partner_tasks(
+    _user: CurrentUser = Depends(require_roles(Role.LEG_ADMIN)),
+) -> list[AdminPartnerTaskRead]:
+    if persistence_enabled():
+        async with async_session_for_current_database() as session:
+            tasks: list[AdminPartnerTaskRead] = []
+            for package in await _async_mutation_packages(session):
+                if package.leg_id != BASADINGEN_LEG_ID:
+                    continue
+
+                metadata = await _async_mutation_package_metadata(session, package)
+                latest_status_event = metadata.status_history[-1]
+                if latest_status_event.status in {
+                    "question",
+                    "technically_not_possible",
+                }:
+                    tasks.append(_admin_partner_task_read(package, latest_status_event))
+
+            return sorted(tasks, key=lambda task: task.created_at, reverse=True)
+
+    tasks: list[AdminPartnerTaskRead] = []
+    for package in MUTATION_PACKAGES.values():
+        if package.leg_id != BASADINGEN_LEG_ID:
+            continue
+
+        latest_status_event = _mutation_package_metadata(package).status_history[-1]
+        if latest_status_event.status in {"question", "technically_not_possible"}:
+            tasks.append(_admin_partner_task_read(package, latest_status_event))
+
+    return sorted(tasks, key=lambda task: task.created_at, reverse=True)
 
 
 @app.get(
@@ -4156,7 +5774,11 @@ async def current_document_version(
 
             result = await session.execute(
                 select(PortalDocumentVersion)
-                .where(PortalDocumentVersion.document_key == document_key)
+                .where(
+                    PortalDocumentVersion.document_key == document_key,
+                    PortalDocumentVersion.context
+                    == REQUIRED_PARTICIPANT_DOCUMENT_CONTEXT,
+                )
                 .order_by(
                     PortalDocumentVersion.published_at.desc(),
                     PortalDocumentVersion.id.desc(),
@@ -4175,7 +5797,10 @@ async def current_document_version(
     if user.role == Role.PARTICIPANT:
         _verified_participant(user)
 
-    document = _current_document_version(document_key)
+    document = _current_document_version(
+        document_key,
+        context=REQUIRED_PARTICIPANT_DOCUMENT_CONTEXT,
+    )
     if document is None:
         raise HTTPException(status_code=404, detail="Document version not found")
 
@@ -4350,12 +5975,16 @@ async def create_participant_mutation_request(
     if persistence_enabled():
         async with async_session_for_current_database() as session:
             participant = await _async_verified_participant(session, user)
+            _require_eligibility_approved(participant)
+            await _async_require_required_document_acceptance(session, participant)
             mutation_request = _build_mutation_request(participant, mutation)
             session.add(_mutation_request_row(mutation_request))
             await session.commit()
             return mutation_request
 
     participant = _verified_participant(user)
+    _require_eligibility_approved(participant)
+    _require_required_document_acceptance(participant)
     mutation_request = _build_mutation_request(participant, mutation)
     MUTATION_REQUESTS.setdefault(participant.id, []).append(mutation_request)
 
@@ -4390,6 +6019,10 @@ async def participant_mutation_requests(
     return MUTATION_REQUESTS.get(participant.id, [])
 
 
+@app.get(
+    "/api/auth/invitations/{token}/accept",
+    response_model=InvitationAcceptResponse,
+)
 @app.post(
     "/api/auth/invitations/{token}/accept",
     response_model=InvitationAcceptResponse,
@@ -4435,7 +6068,11 @@ async def accept_participant_invitation(token: str) -> InvitationAcceptResponse:
         ),
     )
     account = USER_ACCOUNTS[participant.id]
-    event = _queue_email_event("email_verification", participant.email)
+    event = _queue_email_event(
+        "email_verification",
+        participant.email,
+        verification_token=invitation.token,
+    )
 
     if persistence_enabled():
         async with async_session_for_current_database() as session:
@@ -4453,14 +6090,36 @@ async def accept_participant_invitation(token: str) -> InvitationAcceptResponse:
             )
             await session.commit()
 
+    if event.status == "failed":
+        raise HTTPException(
+            status_code=503,
+            detail="Email delivery failed",
+        )
+
+    user = CurrentUser(
+        id=participant.id,
+        email=participant.email,
+        display_name=participant.display_name,
+        role=Role.PARTICIPANT,
+    )
+    access_token = (
+        f"dev:participant:{participant_id}"
+        if development_auth_enabled()
+        else create_access_token(user)
+    )
+
     return InvitationAcceptResponse(
-        access_token=f"dev:participant:{participant_id}",
+        access_token=access_token,
         token_type="bearer",
         participant_id=participant_id,
         email_verification_required=True,
     )
 
 
+@app.get(
+    "/api/auth/email-verifications/{token}/verify",
+    response_model=EmailVerificationResponse,
+)
 @app.post(
     "/api/auth/email-verifications/{token}/verify",
     response_model=EmailVerificationResponse,
@@ -4606,7 +6265,13 @@ async def participant_membership(
     if persistence_enabled():
         async with async_session_for_current_database() as session:
             participant = await _async_verified_participant(session, user)
-            return _participant_membership_read(participant)
+            missing_required_document_keys = (
+                await _async_missing_required_document_keys(session, participant)
+            )
+            return _participant_membership_read(
+                participant,
+                missing_required_document_keys=missing_required_document_keys,
+            )
 
     participant = _verified_participant(user)
 

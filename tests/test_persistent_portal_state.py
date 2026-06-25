@@ -27,7 +27,12 @@ def clear_runtime_state() -> None:
         portal.INVITATIONS,
         portal.COMMUNICATION_EVENTS,
         portal.USER_ACCOUNTS,
+        portal.PASSWORD_RESET_TOKENS,
         portal.PARTICIPANTS,
+        portal.NETWORK_TOPOLOGY_ENTRIES,
+        portal.PILOT_FEEDBACK,
+        portal.INTEREST_RECORDS,
+        portal.PILOT_ALLOWLIST,
         portal.IDENTITY_VERIFICATIONS,
         portal.DOCUMENT_VERSIONS,
         portal.CONSENT_EVIDENCE,
@@ -56,6 +61,21 @@ def poison_legacy_snapshot(database_path: Path) -> None:
             on conflict(id) do update set payload_json = excluded.payload_json
             """,
         )
+
+
+def approve_participant_eligibility(
+    client: TestClient,
+    participant_id: str,
+) -> None:
+    response = client.post(
+        f"/api/admin/participants/{participant_id}/eligibility-review",
+        headers=LEG_HEADERS,
+        json={
+            "decision": "approved",
+            "reason": "Persistent-state test participant eligibility approved.",
+        },
+    )
+    assert response.status_code == 200
 
 
 def delete_document_versions(database_path: Path) -> None:
@@ -116,6 +136,7 @@ def test_self_service_onboarding_survives_new_session_without_legacy_snapshot(
         },
     )
     assert setup_response.status_code == 200
+    approve_participant_eligibility(first_client, onboarding["participant_id"])
     participant_headers = {
         "Authorization": f"Bearer {setup_response.json()['access_token']}",
     }
@@ -151,6 +172,57 @@ def test_self_service_onboarding_survives_new_session_without_legacy_snapshot(
         event["event_type"]
         for event in communication_response.json()
     } == {"email_verification"}
+
+
+def test_failed_smtp_event_uses_database_source_after_delivery_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "smtp-failed-event.db"
+    database_url = f"sqlite:///{database_path.as_posix()}"
+    recipient_email = "db-backed-smtp-failure@example.test"
+
+    class FailingSmtp:
+        def __init__(self, _host: str, _port: int, timeout: int):
+            assert timeout == 10
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc, _traceback):
+            return False
+
+        def send_message(self, _message):
+            raise RuntimeError("smtp unavailable")
+
+    monkeypatch.setenv("SUNTERRA_DATABASE_URL", database_url)
+    monkeypatch.setenv("SUNTERRA_ENV", "production")
+    monkeypatch.setenv("SUNTERRA_PUBLIC_ROLLOUT_APPROVED", "1")
+    monkeypatch.setenv("SUNTERRA_SECRET_KEY", "smtp-production-secret")
+    monkeypatch.setenv("SUNTERRA_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SUNTERRA_SMTP_PORT", "587")
+    monkeypatch.setenv("SUNTERRA_SMTP_FROM_EMAIL", "noreply@portal.example.test")
+    monkeypatch.setenv("SUNTERRA_PUBLIC_BASE_URL", "https://portal.example.test")
+    monkeypatch.setattr("smtplib.SMTP", FailingSmtp)
+    migrate_database(database_url)
+    clear_runtime_state()
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(
+        "/api/auth/self-service-onboarding-requests",
+        json={"email": recipient_email, "display_name": "DB Failed SMTP"},
+    )
+    clear_runtime_state()
+    monkeypatch.setenv("SUNTERRA_ENV", "development")
+    events_response = client.get(
+        f"/api/admin/communication-events?recipient_email={recipient_email}",
+        headers=LEG_HEADERS,
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Email delivery failed"}
+    assert events_response.status_code == 200
+    assert [event["status"] for event in events_response.json()] == ["failed"]
 
 
 def test_participant_identity_checkpoint_uses_async_database_when_legacy_snapshot_is_unreadable(
@@ -383,6 +455,7 @@ def test_mutation_request_review_survives_new_session_without_legacy_snapshot(
     participant_headers = {
         "Authorization": f"Bearer {setup['access_token']}",
     }
+    approve_participant_eligibility(first_client, onboarding["participant_id"])
     submitted_response = first_client.post(
         "/api/participants/me/mutation-requests",
         headers=participant_headers,
@@ -473,6 +546,7 @@ def test_file_evidence_survives_new_session_without_legacy_snapshot(
     participant_headers = {
         "Authorization": f"Bearer {setup['access_token']}",
     }
+    approve_participant_eligibility(first_client, onboarding["participant_id"])
     submitted = first_client.post(
         "/api/participants/me/mutation-requests",
         headers=participant_headers,
@@ -578,9 +652,9 @@ def test_portal_state_survives_new_client_session(tmp_path: Path, monkeypatch) -
         },
     ).json()
     first_client.post(
-        f"/api/admin/mutation-requests/{submitted['id']}/review-decision",
+        f"/api/admin/mutation-requests/{submitted['id']}/package-readiness",
         headers=LEG_HEADERS,
-        json={"decision": "approved"},
+        json={"ready": True, "reason": "Paketbereit-Check bestanden."},
     )
     package = first_client.post(
         "/api/admin/mutation-packages",
@@ -750,6 +824,299 @@ def test_invitation_account_setup_uses_async_runtime_database_after_restart(
     )
     assert me_response.status_code == 200
     assert me_response.json() == login["user"]
+
+
+def test_network_topology_precheck_uses_async_runtime_database_after_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "async-runtime-network-topology.db"
+    migration_url = f"sqlite:///{database_path.as_posix()}"
+    runtime_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    migrate_database(migration_url)
+    monkeypatch.delenv("SUNTERRA_DATABASE_URL", raising=False)
+    monkeypatch.setenv("SUNTERRA_ASYNC_DATABASE_URL", runtime_url)
+    clear_runtime_state()
+
+    first_client = TestClient(app)
+    imported_response = first_client.post(
+        "/api/admin/network-topology-entries",
+        headers=LEG_HEADERS,
+        json={
+            "source_name": "Async Runtime Topologie 2035",
+            "entries": [
+                {
+                    "metering_point_id": "CH-ASYNC-8254-0001",
+                    "street": "Persistenzweg 12",
+                    "postal_code": "8254",
+                    "city": "Basadingen",
+                },
+            ],
+        },
+    )
+    assert imported_response.status_code == 201
+
+    delete_legacy_snapshot(database_path)
+    clear_runtime_state()
+    second_client = TestClient(app)
+
+    onboarding_response = second_client.post(
+        "/api/auth/self-service-onboarding-requests",
+        json={
+            "email": "async-runtime-topology@example.test",
+            "display_name": "Async Runtime Topology",
+            "metering_point_id": "CH-ASYNC-8254-0001",
+            "street": "Persistenzweg 12",
+            "postal_code": "8254",
+            "city": "Basadingen",
+        },
+    )
+    onboarding = onboarding_response.json()
+    second_client.post(
+        f"/api/auth/email-verifications/{onboarding['dev_email_verification_token']}/verify",
+    )
+    setup_response = second_client.post(
+        "/api/auth/participant-account-setup",
+        headers={"Authorization": f"Bearer {onboarding['access_token']}"},
+        json={
+            "display_name": "Async Runtime Topology",
+            "password": "SunTerra123!",
+        },
+    )
+    participant_headers = {
+        "Authorization": f"Bearer {setup_response.json()['access_token']}",
+    }
+    membership_response = second_client.get(
+        "/api/participants/me/membership",
+        headers=participant_headers,
+    )
+
+    assert onboarding_response.status_code == 201
+    assert setup_response.status_code == 200
+    assert membership_response.status_code == 200
+    assert membership_response.json()["membership_status"] == "active"
+    assert membership_response.json()["eligibility_status"] == "approved"
+    assert (
+        membership_response.json()["eligibility_review_reason"]
+        == "Netzwerktopologie vorgeprueft: Async Runtime Topologie 2035"
+    )
+
+
+def test_password_reset_token_uses_async_runtime_database_after_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "async-runtime-password-reset.db"
+    migration_url = f"sqlite:///{database_path.as_posix()}"
+    runtime_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    migrate_database(migration_url)
+    monkeypatch.delenv("SUNTERRA_DATABASE_URL", raising=False)
+    monkeypatch.setenv("SUNTERRA_ASYNC_DATABASE_URL", runtime_url)
+    clear_runtime_state()
+
+    first_client = TestClient(app)
+    onboarding_response = first_client.post(
+        "/api/auth/self-service-onboarding-requests",
+        json={
+            "email": "async-runtime-reset@example.test",
+            "display_name": "Async Runtime Reset",
+        },
+    )
+    assert onboarding_response.status_code == 201
+    onboarding = onboarding_response.json()
+    first_client.post(
+        f"/api/auth/email-verifications/{onboarding['dev_email_verification_token']}/verify",
+    )
+    setup_response = first_client.post(
+        "/api/auth/participant-account-setup",
+        headers={"Authorization": f"Bearer {onboarding['access_token']}"},
+        json={
+            "display_name": "Async Runtime Reset",
+            "password": "OldReset123!",
+        },
+    )
+    assert setup_response.status_code == 200
+
+    reset_request_response = first_client.post(
+        "/api/auth/password-reset/request",
+        json={"email": "async-runtime-reset@example.test"},
+    )
+    assert reset_request_response.status_code == 202
+    assert len(portal.PASSWORD_RESET_TOKENS) == 1
+    reset_token = next(iter(portal.PASSWORD_RESET_TOKENS))
+
+    delete_legacy_snapshot(database_path)
+    clear_runtime_state()
+    second_client = TestClient(app)
+
+    confirm_response = second_client.post(
+        "/api/auth/password-reset/confirm",
+        json={"token": reset_token, "password": "NewReset123!"},
+    )
+    old_login_response = second_client.post(
+        "/api/auth/login",
+        json={
+            "email": "async-runtime-reset@example.test",
+            "password": "OldReset123!",
+        },
+    )
+    new_login_response = second_client.post(
+        "/api/auth/login",
+        json={
+            "email": "async-runtime-reset@example.test",
+            "password": "NewReset123!",
+        },
+    )
+    reused_response = second_client.post(
+        "/api/auth/password-reset/confirm",
+        json={"token": reset_token, "password": "AnotherReset123!"},
+    )
+
+    assert confirm_response.status_code == 200
+    assert confirm_response.json() == {"status": "password_reset_completed"}
+    assert old_login_response.status_code == 401
+    assert new_login_response.status_code == 200
+    assert reused_response.status_code == 400
+
+
+def test_pilot_feedback_uses_async_runtime_database_after_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "async-runtime-pilot-feedback.db"
+    migration_url = f"sqlite:///{database_path.as_posix()}"
+    runtime_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    migrate_database(migration_url)
+    monkeypatch.delenv("SUNTERRA_DATABASE_URL", raising=False)
+    monkeypatch.setenv("SUNTERRA_ASYNC_DATABASE_URL", runtime_url)
+    clear_runtime_state()
+
+    first_client = TestClient(app)
+    onboarding_response = first_client.post(
+        "/api/auth/self-service-onboarding-requests",
+        json={
+            "email": "async-runtime-feedback@example.test",
+            "display_name": "Async Runtime Feedback",
+        },
+    )
+    assert onboarding_response.status_code == 201
+    onboarding = onboarding_response.json()
+    first_client.post(
+        f"/api/auth/email-verifications/{onboarding['dev_email_verification_token']}/verify",
+    )
+    setup_response = first_client.post(
+        "/api/auth/participant-account-setup",
+        headers={"Authorization": f"Bearer {onboarding['access_token']}"},
+        json={
+            "display_name": "Async Runtime Feedback",
+            "password": "SunTerra123!",
+        },
+    )
+    assert setup_response.status_code == 200
+    feedback_response = first_client.post(
+        "/api/pilot-feedback",
+        headers={"Authorization": f"Bearer {setup_response.json()['access_token']}"},
+        json={
+            "category": "rollout_gate",
+            "message": "Pilotfeedback bleibt nach Neustart sichtbar.",
+            "context": "public-rollout-go-no-go",
+        },
+    )
+    assert feedback_response.status_code == 201
+    feedback = feedback_response.json()
+
+    delete_legacy_snapshot(database_path)
+    clear_runtime_state()
+    second_client = TestClient(app)
+
+    listed_response = second_client.get(
+        "/api/admin/pilot-feedback",
+        headers=LEG_HEADERS,
+    )
+
+    assert listed_response.status_code == 200
+    assert listed_response.json() == [feedback]
+
+    reviewed_response = second_client.patch(
+        f"/api/admin/pilot-feedback/{feedback['id']}",
+        headers=LEG_HEADERS,
+        json={
+            "status": "resolved",
+            "rollout_relevance": "blocks_public_rollout",
+            "admin_note": "Vor Public-Rollout im Go/No-Go geprueft.",
+        },
+    )
+    assert reviewed_response.status_code == 200
+    reviewed_feedback = reviewed_response.json()
+    assert reviewed_feedback["status"] == "resolved"
+    assert reviewed_feedback["rollout_relevance"] == "blocks_public_rollout"
+    assert reviewed_feedback["admin_note"] == "Vor Public-Rollout im Go/No-Go geprueft."
+    assert reviewed_feedback["reviewed_by"] == "dev-leg-admin"
+
+    delete_legacy_snapshot(database_path)
+    clear_runtime_state()
+    third_client = TestClient(app)
+    relisted_response = third_client.get(
+        "/api/admin/pilot-feedback",
+        headers=LEG_HEADERS,
+    )
+
+    assert relisted_response.status_code == 200
+    assert relisted_response.json() == [reviewed_feedback]
+
+
+def test_pilot_interest_and_allowlist_use_async_runtime_database_after_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "async-runtime-pilot-access.db"
+    migration_url = f"sqlite:///{database_path.as_posix()}"
+    runtime_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    migrate_database(migration_url)
+    monkeypatch.delenv("SUNTERRA_DATABASE_URL", raising=False)
+    monkeypatch.setenv("SUNTERRA_ASYNC_DATABASE_URL", runtime_url)
+    monkeypatch.setenv("SUNTERRA_REGISTRATION_MODE", "pilot")
+    clear_runtime_state()
+
+    first_client = TestClient(app)
+    email = "async-runtime-pilot-access@example.test"
+    interest_response = first_client.post(
+        "/api/auth/self-service-onboarding-requests",
+        json={"email": email, "display_name": "Async Pilot Access"},
+    )
+    listed_interest = first_client.get(
+        "/api/admin/interest-records",
+        headers=LEG_HEADERS,
+    )
+    allowlisted_response = first_client.post(
+        "/api/admin/pilot-allowlist",
+        headers=LEG_HEADERS,
+        json={"email": email},
+    )
+
+    assert interest_response.status_code == 202
+    interest_record = interest_response.json()
+    assert listed_interest.status_code == 200
+    assert listed_interest.json() == [interest_record]
+    assert allowlisted_response.status_code == 201
+    assert allowlisted_response.json()["email"] == email
+
+    delete_legacy_snapshot(database_path)
+    clear_runtime_state()
+    second_client = TestClient(app)
+    relisted_interest = second_client.get(
+        "/api/admin/interest-records",
+        headers=LEG_HEADERS,
+    )
+    onboarding_response = second_client.post(
+        "/api/auth/self-service-onboarding-requests",
+        json={"email": email, "display_name": "Async Pilot Access"},
+    )
+
+    assert relisted_interest.status_code == 200
+    assert relisted_interest.json() == [interest_record]
+    assert onboarding_response.status_code == 201
+    assert onboarding_response.json()["participant_status"] == "pending_email_verification"
 
 
 def test_admin_participant_directory_uses_async_runtime_database_after_restart(
@@ -1183,6 +1550,7 @@ def test_mutation_requests_use_async_runtime_table_over_stale_snapshot(
     participant_headers = {
         "Authorization": f"Bearer {setup_response.json()['access_token']}",
     }
+    approve_participant_eligibility(first_client, onboarding["participant_id"])
     submitted_response = first_client.post(
         "/api/participants/me/mutation-requests",
         headers=participant_headers,
@@ -1274,6 +1642,7 @@ def test_file_evidence_uses_async_runtime_table_over_stale_snapshot(
     participant_headers = {
         "Authorization": f"Bearer {setup_response.json()['access_token']}",
     }
+    approve_participant_eligibility(first_client, onboarding["participant_id"])
     submitted = first_client.post(
         "/api/participants/me/mutation-requests",
         headers=participant_headers,

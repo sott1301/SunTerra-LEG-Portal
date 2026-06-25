@@ -18,7 +18,10 @@ def reset_portal_state() -> None:
     for store in [
         portal.INVITATIONS,
         portal.COMMUNICATION_EVENTS,
+        portal.USER_ACCOUNTS,
+        portal.PASSWORD_RESET_TOKENS,
         portal.PARTICIPANTS,
+        portal.NETWORK_TOPOLOGY_ENTRIES,
         portal.IDENTITY_VERIFICATIONS,
         portal.DOCUMENT_VERSIONS,
         portal.CONSENT_EVIDENCE,
@@ -93,9 +96,9 @@ def submit_regular_address_mutation(
 
 def approve_mutation(client: TestClient, mutation_request_id: str) -> None:
     response = client.post(
-        f"/api/admin/mutation-requests/{mutation_request_id}/review-decision",
+        f"/api/admin/mutation-requests/{mutation_request_id}/package-readiness",
         headers=LEG_HEADERS,
-        json={"decision": "approved"},
+        json={"ready": True, "reason": "Paketbereit-Check bestanden."},
     )
     assert response.status_code == 200
 
@@ -172,27 +175,52 @@ def test_partner_member_register_redacts_private_internal_consent_file_and_actor
         },
     )
     assert contact_response.status_code == 200
-    document = client.post(
-        "/api/admin/document-versions",
-        headers={"Authorization": "Bearer dev:leg_admin"},
-        json={
-            "document_key": "portal_terms",
-            "title": "Portal Nutzungsbedingungen",
-            "version": "2031-02-01",
-            "content": "private consent document content",
-            "context": "participant_onboarding",
-        },
-    ).json()
-    consent_response = client.post(
-        "/api/participants/me/consent-evidence",
-        headers={"Authorization": f"Bearer {participant_token}"},
-        json={
-            "document_version_id": document["id"],
-            "context": "participant_onboarding",
-            "accepted": True,
-        },
-    )
-    assert consent_response.status_code == 201
+    documents = [
+        client.post(
+            "/api/admin/document-versions",
+            headers={"Authorization": "Bearer dev:leg_admin"},
+            json={
+                "document_key": "privacy_notice",
+                "title": "Datenschutzhinweis",
+                "version": "2031-02-01",
+                "content": "private privacy document content",
+                "context": "participant_onboarding",
+            },
+        ).json(),
+        client.post(
+            "/api/admin/document-versions",
+            headers={"Authorization": "Bearer dev:leg_admin"},
+            json={
+                "document_key": "portal_terms",
+                "title": "Portal Nutzungsbedingungen",
+                "version": "2031-02-01",
+                "content": "private consent document content",
+                "context": "participant_onboarding",
+            },
+        ).json(),
+        client.post(
+            "/api/admin/document-versions",
+            headers={"Authorization": "Bearer dev:leg_admin"},
+            json={
+                "document_key": "leg_contract",
+                "title": "LEG-Vertrag",
+                "version": "2031-02-01",
+                "content": "private contract document content",
+                "context": "participant_onboarding",
+            },
+        ).json(),
+    ]
+    for document in documents:
+        consent_response = client.post(
+            "/api/participants/me/consent-evidence",
+            headers={"Authorization": f"Bearer {participant_token}"},
+            json={
+                "document_version_id": document["id"],
+                "context": "participant_onboarding",
+                "accepted": True,
+            },
+        )
+        assert consent_response.status_code == 201
     submitted = submit_regular_address_mutation(
         client,
         participant_token,

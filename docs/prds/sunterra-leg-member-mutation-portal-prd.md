@@ -2,168 +2,145 @@
 
 ## Problem Statement
 
-Die SunTerra LEG Basadingen braucht ein eigenständiges Portal, in dem Teilnehmer ihre Mitgliedschaft, Dokumente, Einwilligungen und meldepflichtigen Änderungen nachvollziehbar verwalten können. LEG-Vertreter müssen Mutationen prüfen, freigeben und fristgerecht als unveränderliche Pakete an Gemeinde und Elektrizitätswerk melden können. Die kombinierte Gemeinde/EW-Rolle braucht ein minimales, datensparsames Mitgliederregister und eine klare Inbox für Mutationspakete.
+Die SunTerra LEG braucht ein eigenständiges Portal, in dem Teilnehmer ihre Mitgliedschaft, Dokumente, Einwilligungen und meldepflichtigen Änderungen nachvollziehbar verwalten können. LEG-Vertreter müssen Eintritte, Mutationen, Paketbereit-Prüfungen und Meldungen an Gemeinde und Elektrizitätswerk sicher bearbeiten können. Die kombinierte Gemeinde/EW-Rolle braucht ein minimales, datensparsames Mitgliederregister und eine klare Inbox für MutationPackages.
 
-Heute ist der fachliche Bedarf klar, aber das Portal soll bewusst als Neubau entstehen und nicht als Laufzeitabhängigkeit des bestehenden SunTerra-LEG-Pilotprojekts. Das neue System muss daher die rechtlich relevanten Mutationsprozesse, Fristen, Nachweise, Rollen und Datenbegrenzungen von Anfang an sauber abbilden.
+Das Portal soll nicht nur als technischer Prototyp funktionieren, sondern in einem verbindlichen Pilot mit echten Nutzern, echten Einwilligungen, echten MutationPackages und echten Gemeinde/EW-Rückmeldungen belastbar sein. Danach soll der Zugang öffentlich für Bürgerinnen und Bürger im SunTerra-LEG-Gebiet geöffnet werden.
+
+Heute ist der fachliche Bedarf klar, aber mehrere Go-live-Fragen sind rechtlich, betrieblich und domänensprachlich entscheidend: produktive Authentifizierung ohne Dev-Zugänge, belastbare Datenpersistenz, nachvollziehbare Dokumentannahme, verbindliche Mutationssemantik, Netzwerktopologie-Prüfung, produktive Mailzustellung, Backup/Restore, Monitoring sowie Legal-, Datenschutz- und Partnerfreigabe.
 
 ## Solution
 
-Das Portal wird als eigenständige Webanwendung für Teilnehmer, LEG-Vertreter, Partner-Administratoren und Plattform-Administratoren gebaut. Es unterstützt Einladung und Self-Service-Onboarding, E-Mail-Verifikation, risikobasierte Identitätsprüfung, versionierte Dokumente, Clickwrap-Einwilligungen, direkte Kontaktänderungen und meldepflichtige Mutationen.
+Das Portal wird als eigenständige Webanwendung für Teilnehmer, LEG-Vertreter, Gemeinde/EW-Administratoren und Plattform-Administratoren gebaut. Es unterstützt Einladung, kontrollierten Self-Service, E-Mail-Verifikation, risikobasierte Identitätsprüfung, versionierte Dokumente, Clickwrap-Einwilligungen, direkte Kontaktänderungen und meldepflichtige Mutationen.
 
-Meldepflichtige Änderungen werden als MutationRequests erfasst, durch LEG-Vertreter geprüft und freigegeben und danach zu unveränderlichen MutationPackages zusammengefasst. Diese Pakete enthalten CSV-, PDF- und JSON-Artefakte mit Schema-Version, Paket-ID, LEG-ID, Quartal, Wirksamkeitsdatum, Hash und Erzeugungszeitpunkt. Partner-Administratoren können Pakete empfangen, prüfen, verarbeiten, Rückfragen stellen oder technische Nicht-Möglichkeit begründen, ohne Zugriff auf nicht notwendige interne Daten zu erhalten.
+Der Go-live erfolgt zweistufig. Phase 1 ist ein verbindlicher, kontrollierter Pilot mit flexibler Testgruppe und allen Kernrollen. Pilotnutzer können echte Daten verwenden und echte Prozesse auslösen, aber der Zugang bleibt per Allowlist oder Einladung begrenzt. Nicht freigegebene E-Mail-Adressen werden als Interessensmeldungen vorgemerkt. Phase 2 öffnet den Self-Service öffentlich für Bürgerinnen und Bürger im SunTerra-LEG-Gebiet.
+
+Der produktive Markenauftritt lautet SunTerra LEG. Basadingen-Schlattingen und Gemeinde/EW werden dort genannt, wo Gebiet, Zuständigkeit, Netzwerktopologie oder Partnerverantwortung konkret werden.
+
+Der öffentliche Teilnahme-Start fragt nur die E-Mail-Adresse ab. Erst nach E-Mail-Verifikation ergänzt der Teilnehmer im geschützten Onboarding seinen Anzeigenamen und setzt ein Passwort. Für verbindliche Teilnahme braucht es eine LEG-Prüfung der Teilnahmeberechtigung. Diese Prüfung berücksichtigt insbesondere die Netzwerktopologie: Der Messpunkt muss im abgedeckten angeschlossenen Raum liegen. Im Pilot erfolgt diese Prüfung manuell ausserhalb des Portals und wird im Portal dokumentiert. Vor dem öffentlichen Rollout soll eine importierbare Messpunkt-/Adressliste eine Vorprüfung ermöglichen; manuelle Ausnahmebestätigung bleibt bei Listenunvollständigkeit möglich.
+
+Teilnehmer akzeptieren vor verbindlicher Nutzung versionierte Dokumente: Datenschutzhinweis, Portal-Nutzungsbedingungen und LEG-Vertrag. ConsentEvidence speichert Hash, Zeitpunkt, Dokumentversion und Kontext.
+
+Die Mutationssemantik wird geschärft. Ein `entry` braucht konstitutive LEG-Freigabe. Alle anderen Mutationstypen gelten bei Einreichung als gültige Teilnehmererklärung, sofern sie nicht fehlerhaft oder unvollständig sind. Vor Paketierung führt die LEG für Nicht-`entry`-Mutationen einen formalen Paketbereit-Check durch. Das ist keine fachliche Wirksamkeitsfreigabe, sondern eine Vollständigkeits- und Plausibilitätsprüfung. Fehlerhafte oder unvollständige Mutationen gehen auf Klärung oder Stopp mit Begründung; Teilnehmer reichen korrigiert neu ein. Gemeinde/EW-Status wie Rückfrage oder technisch nicht möglich erzeugt Folgeaufgaben, ändert Mutation oder Mitgliedschaft aber nicht automatisch.
 
 Das Portal bleibt in v1 bewusst fokussiert: keine Abrechnung, kein Inkasso, kein Settlement, keine Bankdaten, keine 15-Minuten-Messwerte, keine freie Dateiablage und keine automatisierte Gemeinde-/EW-Schnittstelle.
 
-Die Portaloberfläche wird in einen öffentlichen und einen geschützten Teil getrennt. Alle Besucher landen zuerst auf einer schlanken öffentlichen SunTerra-LEG-Seite, die kurz erklärt, was eine LEG ist, wie Teilnahme grundsätzlich funktioniert und wie der Teilnahmeprozess startet. Bereits registrierte Teilnehmer, LEG-Vertreter, Gemeinde/EW-Administratoren und Plattform-Administratoren melden sich über einen gemeinsamen Login an und werden danach direkt in ihren jeweiligen Rollenbereich geführt.
-
-Der öffentliche Teilnahme-Start fragt nur die E-Mail-Adresse ab. Erst nach E-Mail-Verifikation ergänzt der Teilnehmer im geschützten Onboarding seinen Anzeigenamen und setzt ein Passwort. Das Portal nutzt damit ein echtes E-Mail-/Passwort-Login mit signierten JWT-Zugriffstokens. Öffentliche Einladungscodes bleiben ein optionales Admin-/Deep-Link-Werkzeug, werden aber nicht als primärer öffentlicher Onboarding-Weg präsentiert.
-
-Die visuelle Richtung folgt dem etablierten SunTerra-LEG-Design `Swiss Energy Infrastructure` / `Operator`: neutraler Near-White-Hintergrund, SunTerra-Grün als Primärfarbe, Solar-Gold nur als gezielter Akzent, IBM-Plex-Typografie, flache Panels mit Hairline-Rahmen und sichtbare Trust-/Sicherheits-/Statusmuster. Die öffentliche Seite darf einladender und luftiger wirken als die Arbeitsbereiche, bleibt aber Teil derselben SunTerra-Produktfamilie. Logo und großes Hero-Visual werden in diesem Slice bewusst noch nicht final entschieden.
+Für den verbindlichen Pilot sind produktive Betriebsgrundlagen erforderlich: DB-backed Runtime ohne produktive Abhängigkeit von globalem In-Memory-State, Dev-Auth in Production gesperrt, produktive CORS-Konfiguration, produktive SMTP-Mailzustellung für Auth-/Verifikationskommunikation, Bootstrap-CLI für erste Admins, TOTP-MFA für Admin-Rollen, tägliche verschlüsselte Offsite-Backups mit Restore-Test, Health/Readiness und Alerts. Privates Hosting ist für den Pilot erlaubt; vor öffentlichem Rollout entscheidet ein Betriebsgate, ob privat weiterbetrieben oder auf Managed Hosting gewechselt wird.
 
 ## User Stories
 
-1. Als Teilnehmer möchte ich mich über eine Einladung registrieren, damit ich sicher dem richtigen LEG-Kontext zugeordnet werde.
-2. Als Teilnehmer möchte ich mich auch über einen öffentlichen Self-Service-Prozess melden können, damit ich ohne manuelle Vorab-Einladung starten kann.
-3. Als Teilnehmer möchte ich meine E-Mail-Adresse verifizieren, damit das Portal sicherstellen kann, dass Authentifizierungs- und Verifikationsnachrichten mich erreichen.
-4. Als Teilnehmer möchte ich meine Identität risikobasiert bestätigen, damit meldepflichtige Änderungen verlässlich einer Person zugeordnet werden können.
-5. Als Teilnehmer möchte ich sehen, welche Identitätsprüfung für meinen aktuellen Vorgang erforderlich ist, damit ich verstehe, warum ein Schritt nötig ist.
-6. Als Teilnehmer möchte ich die jeweils gültigen Dokumentversionen sehen, damit ich weiss, welchen Bedingungen ich zustimme.
-7. Als Teilnehmer möchte ich Einwilligungen per Clickwrap abgeben, damit meine Zustimmung mit Zeitpunkt, Dokumentversion, Hash und Kontext nachweisbar ist.
-8. Als Teilnehmer möchte ich meine abgegebenen Einwilligungen einsehen, damit ich nachvollziehen kann, was ich bestätigt habe.
-9. Als Teilnehmer möchte ich meine aktuellen Mitgliedschaftsdaten sehen, damit ich weiss, wie ich in der LEG geführt werde.
-10. Als Teilnehmer möchte ich meine Kontaktkanäle direkt ändern können, damit alltägliche Erreichbarkeitsdaten ohne Mutationsprozess aktuell bleiben.
-11. Als Teilnehmer möchte ich meldepflichtige Adressänderungen als Mutation beantragen, damit Gemeinde und EW korrekt informiert werden können.
-12. Als Teilnehmer möchte ich Messpunktänderungen als Mutation beantragen, damit der fachlich relevante Bezugspunkt geprüft und gemeldet wird.
-13. Als Teilnehmer möchte ich Rollenänderungen als Mutation beantragen, damit Eigentümer-, Mieter- oder andere relevante Rollenwechsel nachvollziehbar verarbeitet werden.
-14. Als Teilnehmer möchte ich Änderungen an Erzeugungsanlagen als Mutation beantragen, damit technische Erzeugungsdaten aktuell bleiben.
-15. Als Teilnehmer möchte ich reguläre Eintritte mit der passenden Frist zum Quartalsende beantragen, damit mein Beitritt rechtzeitig geprüft werden kann.
-16. Als Teilnehmer möchte ich reguläre Austritte mit der passenden Frist zum Quartalsende beantragen, damit mein Austritt sauber geplant wird.
-17. Als Teilnehmer möchte ich Sondermutationen für Auszug beantragen können, damit dringende fachliche Fälle nicht künstlich bis zum regulären Quartalsprozess warten müssen.
-18. Als Teilnehmer möchte ich Sondermutationen für Todesfall melden können, damit die Mitgliedschaft in einem Ausnahmefall korrekt behandelt wird.
-19. Als Teilnehmer möchte ich Sondermutationen für Eigentümer- oder Mieterwechsel beantragen können, damit reale Nutzungs- und Verantwortlichkeitswechsel abgebildet werden.
-20. Als Teilnehmer möchte ich Sondermutationen für Messpunktfehler beantragen können, damit technische Korrekturen nachvollziehbar möglich sind.
-21. Als Teilnehmer möchte ich den Status meiner eigenen Mutationen sehen, damit ich weiss, ob sie eingereicht, in Prüfung, freigegeben, paketiert oder beantwortet sind.
-22. Als Teilnehmer möchte ich die Wirksamkeitsdaten meiner Mutationen sehen, damit ich verstehe, ab wann eine Änderung gilt.
-23. Als Teilnehmer möchte ich erkennen, dass Gemeinde oder EW für Abrechnung und Inkasso zuständig sind, damit ich das Portal nicht als Rechnungsportal missverstehe.
-24. Als Teilnehmer möchte ich keine fremden Teilnehmerdaten sehen können, damit Datenschutz und Rollenabgrenzung gewahrt bleiben.
-25. Als LEG-Vertreter möchte ich Teilnehmer und Mitgliedschaften verwalten, damit das Mitgliederregister fachlich korrekt bleibt.
-26. Als LEG-Vertreter möchte ich eingereichte MutationRequests prüfen, damit nur fachlich plausible und vollständige Änderungen weiterlaufen.
-27. Als LEG-Vertreter möchte ich Mutationen freigeben oder zurückweisen, damit die LEG die Mitgliedschaft weiterhin selbst entscheidet.
-28. Als LEG-Vertreter möchte ich Fristen automatisch berechnen lassen, damit reguläre Eintritte, Austritte und Mutationen zum richtigen Quartal verarbeitet werden.
-29. Als LEG-Vertreter möchte ich Sondermutationen mit Begründung behandeln, damit Ausnahmefälle dokumentiert und prüfbar bleiben.
-30. Als LEG-Vertreter möchte ich sehen, welche Mutationen für ein kommendes Quartal paketiert werden können, damit die Meldung an Gemeinde/EW vollständig erfolgt.
-31. Als LEG-Vertreter möchte ich ein unveränderliches MutationPackage erzeugen, damit gemeldete Daten später nicht stillschweigend verändert werden.
-32. Als LEG-Vertreter möchte ich Paketartefakte als CSV, PDF und JSON erhalten, damit unterschiedliche Prüf- und Ablagebedürfnisse abgedeckt sind.
-33. Als LEG-Vertreter möchte ich den Hash eines Pakets sehen, damit Integrität und Nachvollziehbarkeit gesichert sind.
-34. Als LEG-Vertreter möchte ich eine Statushistorie des Pakets sehen, damit Reaktionen der Partner nachvollziehbar bleiben.
-35. Als LEG-Vertreter möchte ich Rückfragen von Gemeinde/EW sehen, damit ich fehlende oder unklare Informationen gezielt klären kann.
-36. Als LEG-Vertreter möchte ich erkennen, wenn eine Mutation technisch nicht möglich ist, damit ich den Fall mit Teilnehmern und Partnern weiterbehandeln kann.
-37. Als Partner-Administrator möchte ich ein minimales Mitgliederregister sehen, damit Gemeinde/EW nur die meldepflichtigen Registerdaten erhalten.
-38. Als Partner-Administrator möchte ich neue MutationPackages in einer Inbox sehen, damit eingehende Meldungen nicht in E-Mails oder manuellen Ablagen verloren gehen.
-39. Als Partner-Administrator möchte ich ein Paket als empfangen markieren, damit die LEG weiss, dass die Meldung angekommen ist.
-40. Als Partner-Administrator möchte ich ein Paket als in Prüfung markieren, damit der Bearbeitungsstand sichtbar ist.
-41. Als Partner-Administrator möchte ich ein Paket als verarbeitet markieren, damit der Mutationsprozess abgeschlossen werden kann.
-42. Als Partner-Administrator möchte ich eine Rückfrage mit Begründung erfassen, damit die LEG gezielt nacharbeiten kann.
-43. Als Partner-Administrator möchte ich technische Nicht-Möglichkeit mit Begründung erfassen, damit Ablehnungen auditierbar und nicht informell bleiben.
-44. Als Partner-Administrator möchte ich keine internen Prüfnotizen, Einwilligungen oder nicht meldepflichtigen Daten sehen, damit Datensparsamkeit eingehalten wird.
-45. Als Plattform-Administrator möchte ich LEG-Stammdaten und Gemeindezuordnung verwalten, damit Basadingen zuerst unterstützt wird und das Modell später erweiterbar bleibt.
-46. Als Plattform-Administrator möchte ich Dokumentversionen veröffentlichen können, damit neue Bedingungen oder Hinweise kontrolliert ausgerollt werden.
-47. Als Plattform-Administrator möchte ich Zugriffsschutz und Aufbewahrungsstatus von Dateien kontrollieren, damit Dokumente zweckgebunden und regelkonform gespeichert werden.
-48. Als Plattform-Administrator möchte ich AuditEvents für relevante Aktionen haben, damit Änderungen und Entscheidungen nachvollziehbar bleiben.
-49. Als Prüfer möchte ich ConsentEvidence mit Hash, Zeitpunkt, Dokumentversion und Kontext sehen können, damit Einwilligungen beweisbar sind.
-50. Als Prüfer möchte ich IdentityVerification-Level nachvollziehen können, damit risikobasierte Freigaben erklärbar sind.
-51. Als Betreiber möchte ich das Portal deutschsprachig betreiben, damit die v1 klar auf Basadingen und die Zielnutzer fokussiert bleibt.
-52. Als Betreiber möchte ich keine Status- oder Frist-E-Mails in v1 versenden, damit Kommunikation portal-first bleibt und nur notwendige Auth-/Verifikationskommunikation ausgelöst wird.
-53. Als Betreiber möchte ich eine produktionsnahe Konfiguration mit Startguards, damit Fehlkonfigurationen früh erkannt werden.
-54. Als Betreiber möchte ich Backup/Restore-Smokes haben, damit ein Datenverlustszenario vor Produktivbetrieb geübt ist.
-55. Als Entwickler möchte ich öffentliche DTOs rollenbasiert minimal halten, damit die API Datenschutz und Zuständigkeit ausdrückt.
-56. Als Entwickler möchte ich OpenAPI-generierte Types im Frontend verwenden, damit Backend- und Frontend-Verträge nicht auseinanderlaufen.
-57. Als Besucher möchte ich zuerst eine öffentliche SunTerra-LEG-Landing-Page sehen, damit ich verstehe, was eine LEG ist und wie ich teilnehmen kann.
-58. Als interessierter Teilnehmer möchte ich die Teilnahme mit meiner E-Mail-Adresse starten können, damit ich ohne Einladung beginnen kann und keine unnötigen Personendaten vor der Verifikation angeben muss.
-59. Als interessierter Teilnehmer möchte ich nach der E-Mail-Verifikation meinen Anzeigenamen und mein Passwort setzen können, damit ich mein geschütztes Portal-Konto abschliessen kann.
-60. Als registrierter Nutzer möchte ich mich über einen gemeinsamen Login anmelden, damit ich nicht zwischen Teilnehmer-, LEG-, Gemeinde/EW- oder Plattform-Login unterscheiden muss.
-61. Als angemeldeter Teilnehmer möchte ich direkt in `Mein Portal` landen, damit ich meine Mitgliedschaft, Dokumente, Einwilligungen und Mutationen ohne Umweg verwalten kann.
-62. Als angemeldeter LEG-Vertreter möchte ich direkt in `LEG-Verwaltung` landen, damit ich Mutationen, Freigaben, Dokumentversionen und Partnerzugänge bearbeiten kann.
-63. Als angemeldeter Gemeinde/EW-Administrator möchte ich direkt in `Gemeinde/EW` landen, damit ich Aufgaben, Pakete und das minimale Mitgliederregister bearbeiten kann.
-64. Als angemeldeter Plattform-Administrator möchte ich direkt in `Benutzerverwaltung` landen, damit ich Login-Konten und Zugriff steuern kann.
-65. Als Plattform-Administrator möchte ich alle bestehenden Login-Konten sehen können, damit ich Zugriff und Rollen überprüfen kann.
-66. Als Plattform-Administrator möchte ich interne LEG- und Plattform-Nutzer anlegen können, damit administrative Zugänge kontrolliert entstehen.
-67. Als Plattform-Administrator möchte ich Anzeigenamen, Rollen, Aktivstatus und Startpasswörter verwalten können, damit Zugriffe korrigiert oder gesperrt werden können.
-68. Als Plattform-Administrator möchte ich bestehende Teilnehmer- und Gemeinde/EW-Konten verwalten, ohne neue Teilnehmermitgliedschaften anzulegen, damit fachliche Mitgliedschaftsprozesse nicht umgangen werden.
-69. Als LEG-Vertreter möchte ich einen Gemeinde/EW-Admin über einen expliziten Partnerzugangs-Flow anlegen, damit ein besonders sensibler Partnerzugriff bewusst und nachvollziehbar vergeben wird.
-70. Als LEG-Vertreter möchte ich beim Erstellen eines Gemeinde/EW-Zugangs E-Mail, Anzeigename, Organisation/Zuständigkeit und Startpasswort erfassen, damit der Zugang fachlich eindeutig ist.
-71. Als LEG-Vertreter möchte ich vor dem Erstellen eines Gemeinde/EW-Zugangs sehen, welche Daten diese Rolle sehen darf, damit Fehlvergabe vermieden wird.
-72. Als LEG-Vertreter möchte ich Dokumentversionen veröffentlichen können, damit fachliche Bedingungen und Hinweise bei der LEG-Zuständigkeit bleiben.
-73. Als Plattform-Administrator möchte ich Dokumentversionen einsehen, aber nicht veröffentlichen können, damit technische Administration nicht mit fachlicher LEG-Verantwortung vermischt wird.
-74. Als Betreiber möchte ich Demo-Rollen nur als klar markiertes Entwicklungswerkzeug sehen, damit die öffentliche Seite produktnah wirkt.
-75. Als Besucher möchte ich ein sanftes Nutzenversprechen sehen, ohne konkrete Spar- oder Ertragsversprechen, damit die LEG verständlich wirkt, ohne falsche Erwartungen zu setzen.
-76. Als Nutzer möchte ich die SunTerra-Oberfläche als ruhige, präzise Infrastrukturplattform erleben, damit öffentliche und geschützte Bereiche als ein kohärentes Produkt wirken.
+1. Als Besucher möchte ich zuerst eine öffentliche SunTerra-LEG-Seite sehen, damit ich verstehe, was die SunTerra LEG ist und wie Teilnahme grundsätzlich funktioniert.
+2. Als interessierter Bürger möchte ich die Teilnahme mit meiner E-Mail-Adresse starten können, damit ich ohne Vorabkontakt Interesse anmelden kann.
+3. Als Pilotinteressent ausserhalb der Allowlist möchte ich als Interessent vorgemerkt werden, damit ich später kontaktiert oder freigegeben werden kann.
+4. Als Pilotteilnehmer möchte ich über Einladung oder Allowlist registrieren können, damit der verbindliche Pilot kontrolliert bleibt.
+5. Als Teilnehmer möchte ich meine E-Mail-Adresse produktiv verifizieren können, damit Authentifizierungs- und Verifikationsnachrichten mich erreichen.
+6. Als Teilnehmer möchte ich nach E-Mail-Verifikation Anzeigename und Passwort setzen, damit ich mein geschütztes Konto abschliessen kann.
+7. Als Teilnehmer möchte ich mich über einen gemeinsamen Login anmelden, damit ich nicht zwischen Rollenportalen unterscheiden muss.
+8. Als Teilnehmer möchte ich meine aktuelle Mitgliedschaft sehen, damit ich weiss, wie ich in der SunTerra LEG geführt werde.
+9. Als Teilnehmer möchte ich erkennen, ob meine Teilnahmeberechtigung noch geprüft wird, damit ich den Prozessstatus verstehe.
+10. Als Teilnehmer möchte ich sehen, dass die LEG meine Teilnahmeberechtigung anhand der Netzwerktopologie prüft, damit klar ist, warum Messpunktdaten erforderlich sind.
+11. Als LEG-Vertreter möchte ich eine Teilnahmeberechtigung manuell prüfen und begründen können, damit der Pilot ohne importierte Topologieliste starten kann.
+12. Als LEG-Vertreter möchte ich später eine Messpunkt-/Adressliste importieren können, damit öffentliche Registrierungen automatisch vorgeprüft werden.
+13. Als LEG-Vertreter möchte ich bei Listenunvollständigkeit manuell eine Ausnahme bestätigen können, damit berechtigte Teilnehmer nicht blockiert werden.
+14. Als Teilnehmer möchte ich den Datenschutzhinweis akzeptieren, damit meine Personendatenverarbeitung transparent nachgewiesen wird.
+15. Als Teilnehmer möchte ich die Portal-Nutzungsbedingungen akzeptieren, damit die Regeln des digitalen Kanals klar sind.
+16. Als Teilnehmer möchte ich den LEG-Vertrag akzeptieren, damit fachliche Teilnahme- und Mutationsregeln verbindlich dokumentiert sind.
+17. Als Prüfer möchte ich ConsentEvidence mit Dokumentversion, Hash, Zeitpunkt und Kontext sehen können, damit Einwilligungen beweisbar sind.
+18. Als Teilnehmer möchte ich Kontaktkanäle direkt ändern können, damit alltägliche Erreichbarkeitsdaten ohne Mutationsprozess aktuell bleiben.
+19. Als Teilnehmer möchte ich meldepflichtige Adressänderungen einreichen können, damit Gemeinde und EW korrekt informiert werden.
+20. Als Teilnehmer möchte ich Messpunktänderungen einreichen können, damit der relevante Bezugspunkt geprüft und gemeldet wird.
+21. Als Teilnehmer möchte ich Rollenänderungen einreichen können, damit Eigentümer-, Mieter- oder andere relevante Rollenwechsel nachvollziehbar verarbeitet werden.
+22. Als Teilnehmer möchte ich Änderungen an Erzeugungsanlagen einreichen können, damit technische Erzeugungsdaten aktuell bleiben.
+23. Als Teilnehmer möchte ich Eintritte beantragen können, damit neue Teilnahme kontrolliert durch die LEG freigegeben wird.
+24. Als Teilnehmer möchte ich Austritte einreichen können, damit mein Austritt mit Frist und Wirksamkeitsdatum sauber geplant wird.
+25. Als Teilnehmer möchte ich Sondermutationen für Auszug, Todesfall, Eigentümer-/Mieterwechsel, Messpunktfehler und Gemeinde/EW-Korrektur einreichen können, damit Ausnahmefälle dokumentiert werden.
+26. Als Teilnehmer möchte ich Wirksamkeitsdaten anhand des LEG-Vertrags sehen, damit ich verstehe, ab wann eine eingereichte Änderung für Abrechnung oder Register relevant wird.
+27. Als Teilnehmer möchte ich bei Fehlern oder Unvollständigkeit eine Klärung mit Begründung sehen, damit ich korrigiert neu einreichen kann.
+28. Als Teilnehmer möchte ich den Status meiner eigenen Mutationen sehen, damit ich weiss, ob sie eingereicht, paketbereit, in Klärung, gestoppt oder paketiert sind.
+29. Als LEG-Vertreter möchte ich Eintritte konstitutiv freigeben oder stoppen können, damit neue Teilnahme fachlich kontrolliert wird.
+30. Als LEG-Vertreter möchte ich Nicht-`entry`-Mutationen formal auf Paketbereitschaft prüfen, damit gültige Teilnehmererklärungen vollständig und plausibel gemeldet werden.
+31. Als LEG-Vertreter möchte ich fehlerhafte oder unvollständige Mutationen mit Grund auf Klärung oder Stopp setzen, damit der Nachweis vollständig bleibt.
+32. Als LEG-Vertreter möchte ich paketbereite Mutationen für ein kommendes Quartal sehen, damit die Meldung an Gemeinde/EW vollständig erfolgt.
+33. Als LEG-Vertreter möchte ich ein unveränderliches MutationPackage erzeugen, damit gemeldete Daten später nicht stillschweigend verändert werden.
+34. Als LEG-Vertreter möchte ich Paketartefakte als CSV, PDF und JSON erhalten, damit unterschiedliche Prüf- und Ablagebedürfnisse abgedeckt sind.
+35. Als LEG-Vertreter möchte ich den Hash eines Pakets sehen, damit Integrität und Nachvollziehbarkeit gesichert sind.
+36. Als LEG-Vertreter möchte ich eine Statushistorie des Pakets sehen, damit Reaktionen der Partner nachvollziehbar bleiben.
+37. Als LEG-Vertreter möchte ich Rückfragen von Gemeinde/EW als Folgeaufgaben sehen, damit ich fehlende oder unklare Informationen gezielt klären kann.
+38. Als LEG-Vertreter möchte ich erkennen, wenn eine Meldung technisch nicht möglich ist, damit ich den Fall mit Teilnehmern und Partnern weiterbehandeln kann.
+39. Als Gemeinde/EW-Administrator möchte ich ein minimales Mitgliederregister sehen, damit Gemeinde/EW nur die meldepflichtigen Registerdaten erhalten.
+40. Als Gemeinde/EW-Administrator möchte ich neue MutationPackages in einer Inbox sehen, damit eingehende Meldungen nicht in E-Mails oder manuellen Ablagen verloren gehen.
+41. Als Gemeinde/EW-Administrator möchte ich ein Paket als empfangen, in Prüfung oder verarbeitet markieren, damit die LEG den Bearbeitungsstand sieht.
+42. Als Gemeinde/EW-Administrator möchte ich Rückfragen mit Begründung erfassen, damit die LEG gezielt nacharbeiten kann.
+43. Als Gemeinde/EW-Administrator möchte ich technische Nicht-Möglichkeit mit Begründung erfassen, damit Ablehnungen auditierbar und nicht informell bleiben.
+44. Als Gemeinde/EW-Administrator möchte ich keine internen Prüfnotizen, Einwilligungen oder nicht meldepflichtigen Daten sehen, damit Datensparsamkeit eingehalten wird.
+45. Als Plattform-Administrator möchte ich den ersten produktiven Adminzugang über einen Bootstrap-Prozess erzeugen können, damit keine Default-Accounts in Production nötig sind.
+46. Als Plattform-Administrator möchte ich interne LEG- und Plattform-Nutzer anlegen und sperren können, damit administrative Zugänge kontrolliert entstehen.
+47. Als LEG-Vertreter möchte ich Gemeinde/EW-Admins über einen expliziten Partnerzugangs-Flow anlegen, damit Partnerzugriff bewusst vergeben wird.
+48. Als Admin-Nutzer möchte ich TOTP-MFA einrichten und beim Login verwenden, damit administrative Zugänge vor dem Pilot stärker geschützt sind.
+49. Als Nutzer möchte ich mein Passwort vor dem öffentlichen Rollout per E-Mail zurücksetzen können, damit Support nicht alle Resets manuell bearbeiten muss.
+50. Als Betreiber möchte ich Dev-Token in Production gesperrt wissen, damit keine Entwicklungszugänge produktiv funktionieren.
+51. Als Betreiber möchte ich CORS aus `SUNTERRA_ALLOWED_ORIGINS` konfigurieren, damit nur erlaubte Frontend-Ursprünge produktiv zugreifen.
+52. Als Betreiber möchte ich produktive SMTP-Mailzustellung konfigurieren, damit Einladungen, Verifikation und Passwortreset nicht über Dev-Hilfen laufen.
+53. Als Betreiber möchte ich die Runtime vollständig DB-backed betreiben, damit verbindliche Daten App-Neustarts überleben und nicht aus globalem Runtime-State stammen.
+54. Als Betreiber möchte ich tägliche verschlüsselte Offsite-Backups mit Restore-Test haben, damit Datenverlustszenarien vor Pilotstart geübt sind.
+55. Als Betreiber möchte ich Health/Readiness und Alerts haben, damit Ausfälle oder kritische Fehler im Pilot sichtbar werden.
+56. Als Betreiber möchte ich In-App-Feedback aus dem Pilot sammeln, damit Go/No-Go-Bewertungen nachvollziehbar sind.
+57. Als Betreiber möchte ich den öffentlichen Rollout erst nach einem verarbeiteten echten MutationPackage und 14 stabilen Tagen öffnen, damit der Prozess belastbar erprobt ist.
+58. Als Betreiber möchte ich vor öffentlichem Rollout entscheiden, ob privates Hosting genügt oder Managed Hosting nötig ist, damit Betriebsrisiken bewusst getragen werden.
+59. Als Betreiber möchte ich keine Status- oder Frist-E-Mails in v1 versenden, damit Kommunikation portal-first bleibt.
+60. Als Teilnehmer möchte ich erkennen, dass Gemeinde oder EW für Abrechnung und Inkasso zuständig sind, damit ich das Portal nicht als Rechnungsportal missverstehe.
+61. Als Teilnehmer möchte ich keine fremden Teilnehmerdaten sehen können, damit Datenschutz und Rollenabgrenzung gewahrt bleiben.
+62. Als Entwickler möchte ich öffentliche DTOs rollenbasiert minimal halten, damit API und UI Datenschutz und Zuständigkeit ausdrücken.
+63. Als Entwickler möchte ich OpenAPI-generierte Types im Frontend verwenden, damit Backend- und Frontend-Verträge nicht auseinanderlaufen.
+64. Als Prüfer möchte ich AuditEvents für relevante Aktionen sehen, damit Änderungen und Entscheidungen nachvollziehbar bleiben.
+65. Als Nutzer möchte ich die SunTerra-Oberfläche als ruhige, präzise Infrastrukturplattform erleben, damit öffentliche und geschützte Bereiche als ein kohärentes Produkt wirken.
 
 ## Implementation Decisions
 
 - Das Portal wird als eigenständiges Neubau-Projekt umgesetzt. Der bestehende SunTerra-LEG-Code darf als fachliche und technische Musterquelle dienen, wird aber keine Runtime-Abhängigkeit.
-- Der technische Zielstack ist FastAPI, SQLModel, Alembic und Postgres im Backend sowie React, Vite und TypeScript im Frontend.
-- Die Rollen sind `participant`, `leg_admin`, `partner_admin` und `platform_admin`.
-- `partner_admin` ist die kombinierte Gemeinde/EW-Rolle für Basadingen und erhält nur ein minimales Mitgliederregister plus Mutationspakete.
-- Die Kernobjekte sind LEG, Participant, Membership, MeterPoint, GenerationAsset, DocumentVersion, ConsentEvidence, IdentityVerification, MutationRequest, MutationPackage, PartnerTask, FileEvidence und AuditEvent.
-- Die Rechtsbasis für den Mutationskern orientiert sich an der VSE-Branchenempfehlung LEG und der Art. 19g StromVV-Referenz, insbesondere Bildung/Auflösung, Teilnehmerkreisänderungen, Aussenvertretung, technische Erzeugungsdaten und Mindestverhältnis-Meldung.
-- Onboarding unterstützt Einladung und öffentlichen Self-Service.
-- Die Portalrouten sind produktseitig getrennt: `/` für die öffentliche Landing-Page, `/registrieren` für den E-Mail-Start, `/login` für den gemeinsamen Login und `/app` für den geschützten Rollenbereich.
-- Der öffentliche Self-Service-Start erfasst nur eine E-Mail-Adresse. Anzeigename und Passwort werden erst nach E-Mail-Verifikation im geschützten Teilnehmer-Setup gesetzt.
-- Das Login nutzt E-Mail und Passwort mit signierten JWT-Zugriffstokens. Tokens werden mit `SUNTERRA_SECRET_KEY` signiert, laufen nach 8 Stunden ab und haben in diesem Slice keine Refresh-Token.
-- Nutzerkonten enthalten mindestens ID, E-Mail, Anzeigename, Rolle, Aktivstatus, Passwort-Hash, Passwort-Salt und optional Organisation/Zuständigkeit für Gemeinde/EW-Administratoren.
-- Passwörter werden nie im Klartext gespeichert. Startpasswörter werden nur zum Setzen oder Zurücksetzen verwendet und danach gehasht.
-- Plattform-Administratoren verwalten alle bestehenden Login-Konten, dürfen aber keine neuen Teilnehmermitgliedschaften anlegen.
-- Plattform-Administratoren können interne LEG- und Plattform-Nutzer anlegen, Anzeigenamen und Rollen anpassen, Konten aktivieren/deaktivieren und Startpasswörter zurücksetzen.
-- Gemeinde/EW-Administratoren werden durch LEG-Vertreter über einen expliziten Partnerzugangs-Flow angelegt, weil die LEG die Partnerbeziehung verantwortet.
-- Dokumentversionen werden durch LEG-Vertreter veröffentlicht. Plattform-Administratoren dürfen Dokumentversionen einsehen, aber nicht veröffentlichen.
-- Demo-Rollen und Development-Token bleiben nur als klar markiertes lokales Entwicklungswerkzeug und erscheinen nicht auf der öffentlichen Landing-Page.
-- Die visuelle Richtung ist `Swiss Energy Infrastructure` / `Operator`; die Landing-Page ist etwas einladender, aber nutzt dieselben SunTerra-Tokens und denselben ruhigen Infrastruktur-Charakter.
-- E-Mail-Verifikation ist Teil des Authentifizierungs- und Onboarding-Flusses.
-- Identitätsprüfung ist risikobasiert. E-ID oder SwissID werden in v1 nicht fest eingebaut, aber als spätere Provider-Schnittstelle berücksichtigt.
-- Dokumente sind versioniert. Einwilligungen werden als ConsentEvidence mit Hash, Zeitpunkt, Dokumentversion und Kontext gespeichert.
-- Teilnehmer dürfen Kontaktkanäle direkt ändern.
-- Meldepflichtige Daten wie Adresse, Messpunkt, Rolle, Erzeugungsanlage, Eintritt und Austritt laufen über MutationRequests.
-- Das Fristenmodell nutzt Quartale: Q1 Januar bis März, Q2 April bis Juni, Q3 Juli bis September, Q4 Oktober bis Dezember.
-- Teilnehmer beantragen reguläre Eintritte, Austritte und Mutationen mit 3 Monaten Frist zum Quartalsende.
-- LEG-Vertreter melden Gemeinde/EW mit 2 Monaten Frist.
-- Eintritte und Mutationen gelten ab dem ersten Tag nach Quartalsende.
-- Austritte gelten am Quartalsende.
-- Auszug, Todesfall, Eigentümer-/Mieterwechsel, Messpunktfehler und Gemeinde/EW-Korrektur sind begründete Sondermutationen.
-- Freigegebene Mutationen werden in immutable MutationPackages gesammelt.
-- Ein MutationPackage enthält CSV-, PDF- und JSON-Artefakte, Hash, Stichtag, Frist, Actor und Statushistorie.
-- Partner-Administratoren können Paketstatus setzen: empfangen, in Prüfung, verarbeitet, Rückfrage und technisch nicht möglich.
-- Partnerstatus braucht immer eine Referenz oder Begründung, wenn der Status fachlich erklärungsbedürftig ist.
-- Die LEG entscheidet Mitgliedschaft allein. Partnerstatus darf die Mitgliedschaft nicht automatisch ändern.
-- Dateien werden kontrolliert nach definierten Dokumenttypen gespeichert. Es gibt keine freie Dateiablage.
-- Jede Datei hat Zweck, Version, Hash, Zugriffsschutz und Aufbewahrungsstatus.
-- Kommunikation ist portal-first. v1 versendet keine Status- oder Frist-E-Mails, sondern nur notwendige Auth- und Verifikationskommunikation.
-- Teilnehmer sehen Mitgliedschaft, Dokumente, Einwilligungen, eigene Mutationen und die Zuständigkeit der Gemeinde für Abrechnung/Inkasso.
-- Teilnehmer sehen keine Rechnungen, Bankdaten, Settlement-Daten oder Messwertverläufe.
-- Backend-REST-API-Bereiche werden fachlich getrennt: Authentifizierung, eigene Daten, Dokumente, Teilnehmer-Mutationen, Admin-Teilnehmer, Admin-Mutationen, Admin-Pakete, Partner-Mitgliederregister, Partner-Pakete und Partner-Aufgaben.
-- Public DTOs bleiben minimal und rollenbasiert. Partner-DTOs enthalten nur meldepflichtige Registerdaten und Paketstatus. Interne DTOs enthalten Prüfung, Belege und Auditverweise. Teilnehmer-DTOs enthalten nur eigene Daten und eigene Historie.
-- Exports sind versionierte Artefakte und keine Live-Views.
-- Jeder Export enthält Schema-Version, Paket-ID, LEG-ID, Quartal, Wirksamkeitsdatum, Datensätze, Hash und Erzeugungszeitpunkt.
-- Basadingen ist der erste Zielkontext, aber das Datenmodell enthält LEG- und Gemeinde-ID.
-- v1 ist deutschsprachig.
-- Managed Webbetrieb ist die Zielannahme.
+- Der technische Zielstack bleibt FastAPI, SQLModel, Alembic und Postgres im Backend sowie React, Vite und TypeScript im Frontend.
+- Die produktive Marke ist SunTerra LEG. Basadingen-Schlattingen wird dort genannt, wo Gebiet, Zuständigkeit, Netzwerktopologie oder Gemeinde/EW-Rolle konkret werden.
+- Die Rollen bleiben `participant`, `leg_admin`, `partner_admin` und `platform_admin`. `partner_admin` ist die kombinierte Gemeinde/EW-Rolle.
+- Der Pilot ist verbindlich und umfasst alle Kernrollen. Die Pilotgruppe ist flexibel gross; entscheidend ist ein vollständiger End-to-End-Fall.
+- Pilotzugang wird über Allowlist oder Einladung begrenzt. Nicht freigegebene E-Mails werden als Interessensmeldungen gespeichert, aber nicht zu verbindlichen Konten.
+- Es gibt keinen initialen Mitgliederimport. Teilnehmer entstehen über Registrierung und LEG-Prüfung.
+- Öffentliche Registrierung braucht eine Teilnahmeberechtigungsprüfung durch die LEG. Die Prüfung bewertet insbesondere, ob der Messpunkt gemäss Netzwerktopologie im abgedeckten angeschlossenen Raum liegt.
+- Im Pilot erfolgt die Netzwerktopologie-Prüfung manuell und wird im Portal mit Ergebnis und Begründung dokumentiert.
+- Vor öffentlichem Rollout unterstützt das Portal eine importierte Messpunkt-/Adressliste zur Vorprüfung. Manuelle Ausnahmebestätigung bleibt möglich.
+- Vor verbindlicher Nutzung akzeptieren Teilnehmer drei Dokumentversionen: Datenschutzhinweis, Portal-Nutzungsbedingungen und LEG-Vertrag.
+- E-Mail-Verifikation und Auth-Kommunikation laufen produktiv über konfigurierbare SMTP-Zustellung.
+- Das Login nutzt E-Mail und Passwort mit signierten JWT-Zugriffstokens. Refresh-Tokens bleiben ausserhalb von v1.
+- Passwort-zurücksetzen per E-Mail ist vor öffentlichem Rollout in scope.
+- Admin-Rollen müssen TOTP-MFA schon vor dem verbindlichen Pilot einrichten und verwenden. Teilnehmer-MFA bleibt ausserhalb von v1.
+- Dev-Token und Demo-Rollen bleiben nur Entwicklungswerkzeug und sind in Production hard-disabled.
+- Der erste produktive Admin wird über eine Bootstrap-CLI erzeugt. Es gibt keine produktiven Default-Accounts.
+- `SUNTERRA_ALLOWED_ORIGINS` steuert produktive CORS-Origin-Konfiguration.
+- Alle verbindlichen Daten werden DB-backed betrieben. Produktive Requests dürfen nicht von globalem In-Memory-State oder Full-State-Snapshot-Reloads als Source of Truth abhängen.
+- `entry` ist die einzige Mutation mit konstitutiver LEG-Freigabe.
+- Alle anderen Mutationstypen gelten bei Einreichung als gültige Teilnehmererklärung, sofern sie nicht fehlerhaft oder unvollständig sind.
+- Nicht-`entry`-Mutationen brauchen vor Paketierung einen formalen Paketbereit-Check durch die LEG. Dieser Check bestätigt Vollständigkeit und Plausibilität, nicht fachliche Wirksamkeit.
+- Fehlerhafte oder unvollständige Mutationen gehen auf Klärung oder Stopp mit Begründung; Teilnehmer reichen korrigiert neu ein.
+- Wirksamkeitsdaten folgen den im LEG-Vertrag definierten Fristen.
+- Partnerstatus ändert Mutation oder Mitgliedschaft nicht automatisch. Rückfrage und technische Nicht-Möglichkeit erzeugen Folgeaufgaben.
+- MutationPackages bleiben unveränderliche Artefakte mit CSV, PDF, JSON, Hash, Quartal, Wirksamkeitsdaten, Actor und Statushistorie.
+- Privates Hosting ist für den Pilot erlaubt. Vor öffentlichem Rollout entscheidet ein Betriebsgate, ob privat weiterbetrieben oder auf Managed Hosting gewechselt wird.
+- Pilotbetrieb braucht TLS/Domain, Postgres, SMTP, Secret-Handling, tägliche verschlüsselte Offsite-Backups, Restore-Test, Health/Readiness und Alerts.
+- Der öffentliche Rollout ist erst erlaubt, wenn mindestens ein echtes MutationPackage verarbeitet wurde und danach 14 Tage stabiler Betrieb ohne kritische offene Befunde verstrichen sind.
+- In-App-Feedback wird im Pilot strukturiert gesammelt und in eine Reviewliste für Go/No-Go überführt.
+- Legal-, Datenschutz- und Gemeinde/EW-Prozessfreigabe müssen vor dem verbindlichen Pilot schriftlich vorliegen.
+- Kommunikation bleibt portal-first. v1 versendet keine Status- oder Frist-E-Mails, sondern nur notwendige Auth- und Verifikationskommunikation.
+- Es gibt weiterhin keine automatische Gemeinde-/EW-Schnittstelle in v1.
+- Es gibt keine Abrechnung, kein Inkasso, kein Settlement, keine Bankdaten, keine Rechnungen im Portal und keine 15-Minuten-Messwerte.
 
 ## Testing Decisions
 
 - Tests sollen externes Verhalten prüfen und nicht Implementierungsdetails festnageln.
-- Der höchste sinnvolle Test-Seam ist der API-/Workflow-Seam: Onboarding, Mutation beantragen, LEG-Freigabe, Paketbildung und Partnerstatus werden als komplette Rollenflüsse getestet.
-- Fachlogik wird an einem Domain-Seam separat getestet: Fristenrechner, Quartalswirksamkeit, Sondermutationen, ConsentEvidence, IdentityVerification-Level und Paketregeln.
-- RBAC und Redaction werden explizit getestet, damit `participant`, `leg_admin`, `partner_admin` und `platform_admin` nur die jeweils erlaubten Daten sehen.
-- MutationPackage-Immutability wird über Verhaltenstests geprüft: Ein erzeugtes Paket darf nicht stillschweigend geändert werden.
-- Export-Artefakte werden mit Golden Files oder stabilen Snapshot-Prüfungen getestet: CSV, PDF und JSON müssen Schema-Version, Paket-ID, LEG-ID, Quartal, Wirksamkeitsdatum, Hash und Erzeugungszeitpunkt korrekt enthalten.
-- Datei-Zugriffsschutz wird getestet, inklusive Zweck, Version, Hash, Zugriffsschutz und Aufbewahrungsstatus.
-- AuditEvent-Erzeugung und Audit-Hashing werden an relevanten Aktionen getestet.
-- Frontend-Smokes prüfen die wichtigsten Nutzerwege: Teilnehmer-Onboarding, direkte Kontaktänderung, meldepflichtige Mutation, LEG-Freigabe, Paketbildung, Partner-Inbox, Partner-Mitgliederregister und deutschsprachige UI.
-- Backend-Workflowtests prüfen Login-Erfolg und -Fehler, inaktive Nutzer, JWT-basierte `/api/me`-Auflösung, E-Mail-first-Registrierung, verifiziertes Teilnehmer-Setup, Plattform-Benutzerverwaltung, LEG-Erstellung von Gemeinde/EW-Administratoren und neue Dokument-RBAC-Regeln.
-- Frontend-Tests prüfen, dass die öffentliche Landing-Page der erste Screen ist, `Teilnahme starten` nach `/registrieren` führt, `Einloggen` den gemeinsamen Login öffnet, Rollen nach Login direkt in ihre Startfunktion gelangen und Demo-Rollen nicht auf der Landing-Page sichtbar sind.
-- Frontend-Tests sollen Nutzerinteraktion und sichtbares Verhalten prüfen, nicht interne React-Komponentenstruktur.
-- Migration- und Deployment-Tests umfassen frische Postgres-Migration, Backup/Restore-Smoke, Secret-Konfigurationschecks und produktionsnahe Startguards.
-- Da das Projekt ein Neubau ist, gibt es noch keine vorhandene Testsuite als Prior Art. Die ersten Tests sollen deshalb die oben genannten Systemgrenzen etablieren und danach als Muster für weitere Issues dienen.
+- Der höchste sinnvolle Test-Seam bleibt der API-/Workflow-Seam: Registrierung, Verifikation, Dokumentannahme, Teilnahmeberechtigungsprüfung, Mutation, LEG-Prüfung, Paketbildung, Partnerstatus und Feedback werden als Rollenflüsse getestet.
+- Bestehende Backend- und Frontend-Workflowtests bleiben Prior Art. Neue Tests orientieren sich an den vorhandenen Auth-, Onboarding-, Mutation-, Partner-, Persistent-State- und Production-Readiness-Tests.
+- Backend-Tests prüfen Dev-Auth-Sperre in Production, produktive CORS-Konfiguration, SMTP-Zustellung, Bootstrap-Admin, TOTP-MFA, Passwortreset, Allowlist, Interessensmeldung, Netzwerktopologie-Prüfung, Listen-Vorprüfung, manuelle Ausnahme, Mutationsstatus, Paketbereit-Check, Partner-Folgeaufgaben und DB-backed Persistenz über App-Neustart.
+- Frontend-Smokes prüfen Pilotmodus, öffentliche Registrierung, Interessensmeldung, Admin-MFA, Dokumentannahme, Teilnahmeberechtigungsprüfung, Mutationseinreichung, Paketbereit-Check, Partner-Inbox, In-App-Feedback und deutschsprachige UI.
+- Migration- und Deployment-Tests umfassen frische Migration, Backup/Restore-Smoke, Secret-Konfigurationschecks, produktionsnahe Startguards, Health/Readiness und Alert-Probe.
+- API-Type-Checks bleiben Gate, damit Backend- und Frontend-Verträge nicht auseinanderlaufen.
+- Public Rollout Gate wird als Checkliste testbar gemacht: ein echtes verarbeitetes MutationPackage, 14 stabile Tage, keine kritischen offenen Befunde, bestandener Restore-Test, aktive Alerts, schriftliche Freigaben.
 
 ## Out of Scope
 
@@ -177,19 +154,20 @@ Die visuelle Richtung folgt dem etablierten SunTerra-LEG-Design `Swiss Energy In
 - Automatische Gemeinde-/EW-Schnittstelle in v1
 - E-ID- oder SwissID-Produktintegration in v1
 - Status- oder Frist-E-Mails in v1
-- Refresh-Token, MFA, Passwort-zurücksetzen-per-E-Mail und produktive Mailzustellung
+- Refresh-Token in v1
+- Teilnehmer-MFA in v1
 - Finale Logo-Entscheidung oder finale Hero-Visualisierung für die öffentliche Landing-Page
 - Konkrete Spar-, Ertrags- oder Preisversprechen auf der öffentlichen Landing-Page
 - Freie Dateiablage
 - Mehrsprachigkeit in v1
 - Mobile App
-- Vollständige Multi-LEG-Betriebsoberfläche über Basadingen hinaus
-- Legal- oder Datenschutzfreigabe selbst. Die VSE/StromVV-Auslegung soll vor produktiver Nutzung durch Legal/Datenschutz bestätigt werden.
+- Vollständige Multi-LEG-Betriebsoberfläche über den ersten SunTerra-LEG-Kontext hinaus
+- Automatischer initialer Mitgliederimport
 
 ## Further Notes
 
 - Quellen aus dem bestehenden Plan:
   - VSE Branchenempfehlung LEG: https://www.strom.ch/de/media/15458/download
   - Fedlex AS 2025 139: https://www.fedlex.admin.ch/eli/oc/2025/139/de
-- Das PRD ist als `ready-for-agent` gedacht, sobald das initiale Projektgerüst und die GitHub-Issue-Veröffentlichung vorhanden sind.
-- Spätere Umsetzung sollte aus diesem PRD in kleinere, unabhängig bearbeitbare Issues zerlegt werden.
+- `CONTEXT.md` hält die kanonischen Begriffe SunTerra LEG, LEG-Vertrag, Mutation, Eintritt, Paketbereit-Check, Netzwerktopologie, Interessensmeldung und Partnerstatus fest.
+- ADRs dokumentieren die überraschenden Entscheidungen: verbindlicher Pilot mit privatem Hosting und Public-Rollout-Gate, sowie Mutationsbindung bei Einreichung ausser `entry`.

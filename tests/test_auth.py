@@ -15,6 +15,7 @@ def test_authenticated_participant_can_retrieve_own_identity_and_role() -> None:
         "email": "participant@example.test",
         "display_name": "Teilnehmer Demo",
         "role": "participant",
+        "mfa_satisfied": False,
     }
 
 

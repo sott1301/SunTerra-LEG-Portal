@@ -13,6 +13,7 @@ describe("Portal shell", () => {
     window.localStorage.clear();
     window.history.pushState({}, "", "/");
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("zeigt eine deutsche Portal-Shell mit verbundenem Backend", async () => {
@@ -102,6 +103,116 @@ describe("Portal shell", () => {
 
     expect(window.location.pathname).toBe("/login");
     expect(screen.getByRole("heading", { name: "Einloggen" })).toBeTruthy();
+
+  });
+
+  it("fordert ueber die oeffentliche Reset-Seite einen Passwort-Link an", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/auth/password-reset/request")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          email: "reset.ui@example.test",
+        });
+
+        return new Response(
+          JSON.stringify({ status: "password_reset_requested" }),
+          {
+            status: 202,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/reset-password");
+
+    expect(
+      screen.getByRole("heading", { name: "Passwort zuruecksetzen" }),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("E-Mail fuer Passwortreset"), {
+      target: { value: "reset.ui@example.test" },
+    });
+    screen.getByRole("button", { name: "Reset-Link senden" }).click();
+
+    expect(
+      await screen.findByText(
+        "Wenn ein aktives Konto existiert, wurde ein Reset-Link gesendet.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("bestaetigt ein neues Passwort mit dem Reset-Token aus dem Link", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/auth/password-reset/confirm")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          token: "reset-token-ui",
+          password: "NeuesReset123!",
+        });
+
+        return new Response(
+          JSON.stringify({ status: "password_reset_completed" }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/reset-password?token=reset-token-ui");
+
+    expect(
+      screen.getByRole("heading", { name: "Passwort zuruecksetzen" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Reset-Token erkannt")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Neues Passwort"), {
+      target: { value: "NeuesReset123!" },
+    });
+    screen.getByRole("button", { name: "Passwort aktualisieren" }).click();
+
+    expect(await screen.findByText("Passwort wurde aktualisiert")).toBeTruthy();
   });
 
   it("blockiert den geschützten Arbeitsbereich ohne Anmeldung", async () => {
@@ -130,6 +241,41 @@ describe("Portal shell", () => {
     expect(
       screen.getByText("Fuer die lokale Entwicklung kann eine Demo-Rolle genutzt werden."),
     ).toBeTruthy();
+  });
+
+  it("blendet lokale Demo-Rollen in Production aus", async () => {
+    vi.stubEnv("DEV", false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(
+          JSON.stringify({
+            status: "ok",
+            service: "sunterra-leg-portal",
+            version: "0.1.0",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }),
+    );
+
+    const { unmount } = renderAt("/login");
+
+    expect(await screen.findByText("Backend verbunden")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Einloggen" })).toBeTruthy();
+    expect(screen.queryByLabelText("Demo-Rollen")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Teilnehmer" })).toBeNull();
+
+    unmount();
+    renderAt("/app");
+
+    expect(await screen.findByText("Backend verbunden")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Einloggen" })).toBeTruthy();
+    expect(screen.queryByLabelText("Demo-Rollen")).toBeNull();
   });
 
   it("meldet eine Teilnehmer-Demo-Rolle an und zeigt ihren Arbeitsbereich", async () => {
@@ -178,6 +324,220 @@ describe("Portal shell", () => {
         headers: { Authorization: "Bearer dev:participant" },
       }),
     );
+  });
+
+  it("sendet Pilotfeedback aus dem Teilnehmer-Arbeitsbereich", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-participant",
+            email: "participant@example.test",
+            display_name: "Teilnehmer Demo",
+            role: "participant",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/pilot-feedback")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:participant",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          category: "rollout_gate",
+          message: "Der Pilotablauf ist bereit fuer das Go/No-Go.",
+          context: "mein-portal",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "pilot-feedback-1",
+            category: "rollout_gate",
+            message: "Der Pilotablauf ist bereit fuer das Go/No-Go.",
+            context: "mein-portal",
+            user_id: "dev-participant",
+            user_email: "participant@example.test",
+            user_role: "participant",
+            status: "submitted",
+            created_at: "2026-06-24T21:00:00+00:00",
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+    screen.getByRole("button", { name: "Teilnehmer" }).click();
+
+    expect(await screen.findByText("Mein Portal")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Feedback-Kategorie"), {
+      target: { value: "rollout_gate" },
+    });
+    fireEvent.change(screen.getByLabelText("Feedback-Kontext"), {
+      target: { value: "mein-portal" },
+    });
+    fireEvent.change(screen.getByLabelText("Pilotfeedback"), {
+      target: { value: "Der Pilotablauf ist bereit fuer das Go/No-Go." },
+    });
+    screen.getByRole("button", { name: "Pilotfeedback senden" }).click();
+
+    expect(await screen.findByText("Pilotfeedback gespeichert")).toBeTruthy();
+    expect(screen.getByText("rollout_gate")).toBeTruthy();
+  });
+
+  it("markiert Pilotfeedback im LEG-Admin-Arbeitsbereich als rolloutrelevant erledigt", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-leg-admin",
+            email: "leg-admin@example.test",
+            display_name: "LEG Admin Demo",
+            role: "leg_admin",
+            mfa_satisfied: true,
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/mutation-requests?status=submitted")) {
+        return new Response(JSON.stringify([]), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/admin/pilot-feedback/pilot-feedback-1")) {
+        expect(init?.method).toBe("PATCH");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:leg_admin",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          status: "resolved",
+          rollout_relevance: "blocks_public_rollout",
+          admin_note: "In der Go/No-Go-Liste erledigt.",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "pilot-feedback-1",
+            category: "rollout_gate",
+            message: "Vor dem public rollout fehlt eine klare Betreiberfreigabe.",
+            context: "go-no-go",
+            user_id: "dev-participant",
+            user_email: "participant@example.test",
+            user_role: "participant",
+            status: "resolved",
+            rollout_relevance: "blocks_public_rollout",
+            admin_note: "In der Go/No-Go-Liste erledigt.",
+            reviewed_at: "2026-06-24T21:30:00+00:00",
+            reviewed_by: "dev-leg-admin",
+            created_at: "2026-06-24T21:00:00+00:00",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/pilot-feedback")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "pilot-feedback-1",
+              category: "rollout_gate",
+              message:
+                "Vor dem public rollout fehlt eine klare Betreiberfreigabe.",
+              context: "go-no-go",
+              user_id: "dev-participant",
+              user_email: "participant@example.test",
+              user_role: "participant",
+              status: "submitted",
+              rollout_relevance: null,
+              admin_note: null,
+              reviewed_at: null,
+              reviewed_by: null,
+              created_at: "2026-06-24T21:00:00+00:00",
+            },
+          ]),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+    screen.getByRole("button", { name: "LEG Admin" }).click();
+
+    expect(await screen.findByText("LEG-Verwaltung")).toBeTruthy();
+    expect(
+      await screen.findByText(
+        "Vor dem public rollout fehlt eine klare Betreiberfreigabe.",
+      ),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Bearbeitungsnotiz"), {
+      target: { value: "In der Go/No-Go-Liste erledigt." },
+    });
+    screen.getByRole("button", { name: "Rolloutrelevant erledigen" }).click();
+
+    expect(await screen.findByText("blocks_public_rollout")).toBeTruthy();
+    expect(screen.getByText("resolved")).toBeTruthy();
+    expect(screen.getByText("In der Go/No-Go-Liste erledigt.")).toBeTruthy();
   });
 
   it.each([
@@ -406,6 +766,181 @@ describe("Portal shell", () => {
       expect(window.localStorage.getItem("sunterra.devToken")).toBeNull();
     },
   );
+
+  it("sendet den optionalen TOTP-Code beim Passwort-Login", async () => {
+    const user = {
+      id: "jwt-user-leg-admin",
+      email: "leg-admin@example.test",
+      display_name: "LEG Admin Demo",
+      role: "leg_admin",
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/auth/login")) {
+        expect(JSON.parse(init?.body as string)).toEqual({
+          email: "leg-admin@example.test",
+          password: "SunTerra123!",
+          totp_code: "123456",
+        });
+
+        return new Response(
+          JSON.stringify({
+            access_token: "jwt-leg-admin",
+            token_type: "bearer",
+            expires_in_seconds: 28800,
+            user,
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/me")) {
+        return new Response(JSON.stringify(user), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+
+    fireEvent.change(screen.getByLabelText("E-Mail"), {
+      target: { value: "leg-admin@example.test" },
+    });
+    fireEvent.change(screen.getByLabelText("Passwort"), {
+      target: { value: "SunTerra123!" },
+    });
+    fireEvent.change(screen.getByLabelText("TOTP-Code"), {
+      target: { value: "123456" },
+    });
+    screen.getByRole("button", { name: "Einloggen" }).click();
+
+    expect(await screen.findByText("LEG-Verwaltung")).toBeTruthy();
+  });
+
+  it("fuehrt Admins nach Passwort-Login durch die TOTP-MFA-Einrichtung", async () => {
+    const user = {
+      id: "jwt-user-leg-admin",
+      email: "leg-admin@example.test",
+      display_name: "LEG Admin Demo",
+      role: "leg_admin",
+      mfa_satisfied: false,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/auth/login")) {
+        return new Response(
+          JSON.stringify({
+            access_token: "jwt-leg-admin-pre-mfa",
+            token_type: "bearer",
+            expires_in_seconds: 28800,
+            user,
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/me")) {
+        return new Response(JSON.stringify(user), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/auth/mfa/totp/enroll")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer jwt-leg-admin-pre-mfa",
+        });
+
+        return new Response(
+          JSON.stringify({
+            secret: "JBSWY3DPEHPK3PXP",
+            otpauth_url:
+              "otpauth://totp/SunTerra%20LEG:leg-admin%40example.test?secret=JBSWY3DPEHPK3PXP",
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.includes("/api/admin/")) {
+        return new Response(JSON.stringify({ detail: "Admin MFA required" }), {
+          status: 403,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+    fireEvent.change(screen.getByLabelText("E-Mail"), {
+      target: { value: "leg-admin@example.test" },
+    });
+    fireEvent.change(screen.getByLabelText("Passwort"), {
+      target: { value: "SunTerra123!" },
+    });
+    screen.getByRole("button", { name: "Einloggen" }).click();
+
+    expect(
+      await screen.findByRole("heading", { name: "TOTP-MFA einrichten" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Teilnehmer einladen")).toBeNull();
+
+    screen.getByRole("button", { name: "TOTP-MFA einrichten" }).click();
+
+    expect(await screen.findByText("JBSWY3DPEHPK3PXP")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "otpauth://totp/SunTerra%20LEG:leg-admin%40example.test?secret=JBSWY3DPEHPK3PXP",
+      ),
+    ).toBeTruthy();
+  });
 
   it("meldet ab und entfernt gespeicherte Tokens", async () => {
     window.localStorage.setItem("sunterra.accessToken", "stored-jwt");
@@ -1764,6 +2299,94 @@ describe("Portal shell", () => {
     expect(screen.getByText("hash-portal-terms")).toBeTruthy();
   });
 
+  it("veroeffentlicht als LEG Admin den LEG-Vertrag als Pflichtdokument", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "dev-leg-admin",
+            email: "leg-admin@example.test",
+            display_name: "LEG Admin Demo",
+            role: "leg_admin",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.endsWith("/api/admin/document-versions")) {
+        expect(JSON.parse(init?.body as string)).toEqual({
+          document_key: "leg_contract",
+          title: "LEG-Vertrag",
+          version: "2026-06-24",
+          content: "Vertrag fuer die verbindliche Teilnahme.",
+          context: "participant_onboarding",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "document-version-contract",
+            document_key: "leg_contract",
+            title: "LEG-Vertrag",
+            version: "2026-06-24",
+            document_hash: "hash-leg-contract",
+            context: "participant_onboarding",
+            published_at: "2026-06-24T12:00:00+00:00",
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+    screen.getByRole("button", { name: "LEG Admin" }).click();
+
+    expect(await screen.findByText("LEG-Verwaltung")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Dokumenttyp"), {
+      target: { value: "leg_contract" },
+    });
+    fireEvent.change(screen.getByLabelText("Titel"), {
+      target: { value: "LEG-Vertrag" },
+    });
+    fireEvent.change(screen.getByLabelText("Version"), {
+      target: { value: "2026-06-24" },
+    });
+    fireEvent.change(screen.getByLabelText("Inhalt"), {
+      target: { value: "Vertrag fuer die verbindliche Teilnahme." },
+    });
+    screen
+      .getByRole("button", { name: "Dokumentversion veroeffentlichen" })
+      .click();
+
+    expect(await screen.findByText("Dokumentversion veroeffentlicht")).toBeTruthy();
+    expect(screen.getByText("hash-leg-contract")).toBeTruthy();
+  });
+
   it("warnt LEG Admins vor Datenzugriff und erstellt Gemeinde/EW Zugang", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -1930,6 +2553,215 @@ describe("Portal shell", () => {
       screen.getByLabelText("Ich stimme dieser Dokumentversion zu"),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Zustimmen" })).toBeTruthy();
+  });
+
+  it("zeigt Teilnehmern alle aktuellen Pflichtdokumente vor Zustimmung", async () => {
+    const currentDocuments = {
+      privacy_notice: {
+        id: "document-version-privacy",
+        document_key: "privacy_notice",
+        title: "Datenschutzhinweis",
+        version: "2026-06-24",
+        content: "Datenschutzhinweis fuer den SunTerra LEG Pilot.",
+        document_hash: "hash-privacy-notice",
+        context: "participant_onboarding",
+        published_at: "2026-06-24T12:00:00+00:00",
+      },
+      portal_terms: {
+        id: "document-version-terms",
+        document_key: "portal_terms",
+        title: "Portal-Nutzungsbedingungen",
+        version: "2026-06-24",
+        content: "Nutzungsbedingungen fuer den digitalen Kanal.",
+        document_hash: "hash-portal-terms",
+        context: "participant_onboarding",
+        published_at: "2026-06-24T12:01:00+00:00",
+      },
+      leg_contract: {
+        id: "document-version-contract",
+        document_key: "leg_contract",
+        title: "LEG-Vertrag",
+        version: "2026-06-24",
+        content: "Vertrag fuer die verbindliche Teilnahme.",
+        document_hash: "hash-leg-contract",
+        context: "participant_onboarding",
+        published_at: "2026-06-24T12:02:00+00:00",
+      },
+    };
+    const requestedDocumentKeys: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "participant-anna",
+            email: "anna.keller@example.test",
+            display_name: "Anna Keller",
+            role: "participant",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.includes("/api/documents/current")) {
+        expect(init?.headers).toEqual({
+          Authorization: "Bearer dev:participant",
+        });
+        const documentKey = new URL(url, "http://localhost").searchParams.get(
+          "document_key",
+        ) as keyof typeof currentDocuments;
+        requestedDocumentKeys.push(documentKey);
+
+        return new Response(JSON.stringify(currentDocuments[documentKey]), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+    screen.getByRole("button", { name: "Teilnehmer" }).click();
+
+    expect(await screen.findByText("Datenschutzhinweis")).toBeTruthy();
+    expect(screen.getByText("Portal-Nutzungsbedingungen")).toBeTruthy();
+    expect(screen.getByText("LEG-Vertrag")).toBeTruthy();
+    expect(
+      screen.getAllByLabelText("Ich stimme dieser Dokumentversion zu"),
+    ).toHaveLength(3);
+    expect(requestedDocumentKeys).toEqual([
+      "privacy_notice",
+      "portal_terms",
+      "leg_contract",
+    ]);
+  });
+
+  it("laedt bestehende Zustimmungshistorie beim Teilnehmer-Login", async () => {
+    const documents = {
+      privacy_notice: {
+        id: "document-version-privacy",
+        document_key: "privacy_notice",
+        title: "Datenschutzhinweis",
+        version: "2026-06-24",
+        content: "Datenschutzhinweis fuer den SunTerra LEG Pilot.",
+        document_hash: "hash-privacy-notice",
+        context: "participant_onboarding",
+        published_at: "2026-06-24T12:00:00+00:00",
+      },
+      portal_terms: {
+        id: "document-version-terms",
+        document_key: "portal_terms",
+        title: "Portal-Nutzungsbedingungen",
+        version: "2026-06-24",
+        content: "Nutzungsbedingungen fuer den digitalen Kanal.",
+        document_hash: "hash-portal-terms",
+        context: "participant_onboarding",
+        published_at: "2026-06-24T12:01:00+00:00",
+      },
+      leg_contract: {
+        id: "document-version-contract",
+        document_key: "leg_contract",
+        title: "LEG-Vertrag",
+        version: "2026-06-24",
+        content: "Vertrag fuer die verbindliche Teilnahme.",
+        document_hash: "hash-leg-contract",
+        context: "participant_onboarding",
+        published_at: "2026-06-24T12:02:00+00:00",
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "participant-anna",
+            email: "anna.keller@example.test",
+            display_name: "Anna Keller",
+            role: "participant",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      if (url.includes("/api/documents/current")) {
+        const documentKey = new URL(url, "http://localhost").searchParams.get(
+          "document_key",
+        ) as keyof typeof documents;
+
+        return new Response(JSON.stringify(documents[documentKey]), {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/participants/me/consent-evidence")) {
+        return new Response(
+          JSON.stringify([
+            {
+              participant_id: "participant-anna",
+              document_version_id: "document-version-privacy",
+              document_key: "privacy_notice",
+              version: "2026-06-24",
+              document_hash: "hash-privacy-notice",
+              context: "participant_onboarding",
+              accepted_at: "2026-06-24T12:05:00+00:00",
+            },
+          ]),
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/login");
+    screen.getByRole("button", { name: "Teilnehmer" }).click();
+
+    expect(await screen.findByText("Datenschutzhinweis")).toBeTruthy();
+    expect(await screen.findByText("Einwilligung gespeichert")).toBeTruthy();
+    const history = within(screen.getByLabelText("Einwilligungshistorie"));
+    expect(history.getByText("hash-privacy-notice")).toBeTruthy();
   });
 
   it("speichert Teilnehmer-Zustimmung und zeigt Version und Hash in der Historie", async () => {
@@ -3057,6 +3889,152 @@ describe("Portal shell", () => {
     expect(await screen.findByText("Mein Portal")).toBeTruthy();
     expect(screen.getByText("Selina Frei")).toBeTruthy();
     expect(screen.getByText("selina.frei@example.test")).toBeTruthy();
+  });
+
+  it("sendet Netzwerktopologie-Daten aus dem Self-Service-Formular mit", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/auth/self-service-onboarding-requests")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          email: "topologie@example.test",
+          display_name: "Topologie Test",
+          metering_point_id: "CH-1008901234500000000000000000999",
+          street: "Solarweg 7",
+          postal_code: "8254",
+          city: "Basadingen",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "interest-record-topology",
+            email: "topologie@example.test",
+            display_name: "Topologie Test",
+            status: "interest_recorded",
+            created_at: "2026-06-24T20:00:00+00:00",
+          }),
+          {
+            status: 202,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/registrieren");
+
+    fireEvent.change(screen.getByLabelText("Self-Service E-Mail"), {
+      target: { value: "topologie@example.test" },
+    });
+    fireEvent.change(screen.getByLabelText("Self-Service Anzeigename"), {
+      target: { value: "Topologie Test" },
+    });
+    fireEvent.change(screen.getByLabelText("Messpunkt-ID"), {
+      target: { value: "CH-1008901234500000000000000000999" },
+    });
+    fireEvent.change(screen.getByLabelText("Strasse"), {
+      target: { value: "Solarweg 7" },
+    });
+    fireEvent.change(screen.getByLabelText("PLZ"), {
+      target: { value: "8254" },
+    });
+    fireEvent.change(screen.getByLabelText("Ort"), {
+      target: { value: "Basadingen" },
+    });
+    screen.getByRole("button", { name: "Self-Service starten" }).click();
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Interessensmeldung gespeichert",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("zeigt im Pilotmodus eine Interessensmeldung ohne Account-Schritte", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/api/auth/self-service-onboarding-requests")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual({
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init?.body as string)).toEqual({
+          email: "interesse@example.test",
+          display_name: "Pilot Interesse",
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: "interest-record-1",
+            email: "interesse@example.test",
+            display_name: "Pilot Interesse",
+            status: "interest_recorded",
+            created_at: "2026-06-24T20:00:00+00:00",
+          }),
+          {
+            status: 202,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "sunterra-leg-portal",
+          version: "0.1.0",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAt("/registrieren");
+
+    fireEvent.change(screen.getByLabelText("Self-Service E-Mail"), {
+      target: { value: "interesse@example.test" },
+    });
+    fireEvent.change(screen.getByLabelText("Self-Service Anzeigename"), {
+      target: { value: "Pilot Interesse" },
+    });
+    screen.getByRole("button", { name: "Self-Service starten" }).click();
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Interessensmeldung gespeichert",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText("interesse@example.test")).toBeTruthy();
+    expect(screen.getByText("Pilot Interesse")).toBeTruthy();
+    expect(screen.queryByText("Identitätsprüfung")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Konto einrichten" })).toBeNull();
   });
 
   it("zeigt einen verständlichen Status, wenn das Backend nicht erreichbar ist", async () => {

@@ -26,7 +26,9 @@ def clear_runtime_state() -> None:
         portal.INVITATIONS,
         portal.COMMUNICATION_EVENTS,
         portal.USER_ACCOUNTS,
+        portal.PASSWORD_RESET_TOKENS,
         portal.PARTICIPANTS,
+        portal.NETWORK_TOPOLOGY_ENTRIES,
         portal.IDENTITY_VERIFICATIONS,
         portal.DOCUMENT_VERSIONS,
         portal.CONSENT_EVIDENCE,
@@ -72,6 +74,15 @@ def onboard_verified_participant(client: TestClient, *, email: str) -> dict[str,
         },
     )
     assert setup_response.status_code == 200
+    eligibility_response = client.post(
+        f"/api/admin/participants/{onboarding['participant_id']}/eligibility-review",
+        headers=LEG_HEADERS,
+        json={
+            "decision": "approved",
+            "reason": "Async DB test participant eligibility approved.",
+        },
+    )
+    assert eligibility_response.status_code == 200
 
     return {"Authorization": f"Bearer {setup_response.json()['access_token']}"}
 
@@ -102,9 +113,9 @@ def create_approved_address_mutation(
     assert submitted_response.status_code == 201
     submitted = submitted_response.json()
     review_response = client.post(
-        f"/api/admin/mutation-requests/{submitted['id']}/review-decision",
+        f"/api/admin/mutation-requests/{submitted['id']}/package-readiness",
         headers=LEG_HEADERS,
-        json={"decision": "approved"},
+        json={"ready": True, "reason": "Paketbereit-Check bestanden."},
     )
     assert review_response.status_code == 200
 
@@ -404,7 +415,7 @@ def test_admin_package_generation_does_not_duplicate_mutation_requests_in_async_
     first_package = first_package_response.json()
     assert second_package_response.status_code == 400
     assert second_package_response.json() == {
-        "detail": "No approved un-packaged mutation requests for quarter",
+        "detail": "No package-ready un-packaged mutation requests for quarter",
     }
     assert partner_list_response.status_code == 200
     assert [

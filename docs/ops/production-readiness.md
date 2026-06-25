@@ -28,6 +28,42 @@ Run the explicit config check:
 
 The command returns JSON on success and does not print secret values.
 
+## Private Pilot Hosting Checklist
+
+Run the private pilot checklist before a Pilot deployment:
+
+```powershell
+.\.venv\Scripts\python scripts\production_readiness.py private-pilot-checklist
+```
+
+The command returns the operational gates as JSON and does not print secret
+values. Private hosting is allowed for the Pilot only when access remains
+limited by invitation or Allowlist and these requirements are covered:
+
+- `tls-domain`
+- `postgres-runtime`
+- `configured-cors-origins`
+- `production-secret-key`
+- `smtp-delivery`
+- `bootstrap-admin`
+- `admin-totp-mfa`
+- `daily-encrypted-offsite-backups`
+- `documented-restore-test`
+- `health-readiness-checks`
+- `alert-routing`
+
+The runtime probes must cover `application-health`, `database-readiness`,
+`auth-readiness`, and `smtp-readiness`. Alerts must at least route
+`application-downtime`, `database-unreachable`, `mail-delivery-failures`, and
+`critical-readiness-failures` to an accountable operator.
+
+The public rollout remains gated by
+`hosting-decision-private-or-managed`, a passed restore test, active alerts, 14
+stable days after a real package, reviewed pilot feedback, and written legal,
+data-protection, community, and process approval. Production keeps public
+self-service registration blocked until the `explicit-public-rollout-approval`
+gate is complete and `SUNTERRA_PUBLIC_ROLLOUT_APPROVED=1` is set.
+
 ## Fresh Migration Smoke
 
 Run Alembic against an empty test database:

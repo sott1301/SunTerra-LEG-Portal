@@ -1,5 +1,10 @@
+import base64
+from datetime import UTC, datetime
+import hmac
+from hashlib import sha1
 import sqlite3
 from pathlib import Path
+import struct
 from uuid import uuid4
 
 from alembic import command
@@ -12,6 +17,16 @@ from sunterra_leg_portal.main import app
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def totp_code(secret: str, timestamp: datetime | None = None) -> str:
+    now = timestamp or datetime.now(UTC)
+    counter = int(now.timestamp()) // 30
+    key = base64.b32decode(secret, casefold=True)
+    digest = hmac.new(key, struct.pack(">Q", counter), sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return f"{value % 1_000_000:06d}"
 
 
 def migrate_database(database_url: str) -> None:
@@ -141,10 +156,33 @@ def test_platform_admin_user_management_survives_async_db_restart(
     login = login_response.json()
     assert login["user"]["display_name"] == "Persistent Platform Admin"
     assert login["user"]["role"] == "platform_admin"
+    assert login["user"]["mfa_satisfied"] is False
 
     listed_response = second_client.get(
         "/api/admin/users",
         headers={"Authorization": f"Bearer {login['access_token']}"},
+    )
+    assert listed_response.status_code == 403
+
+    enrollment_response = second_client.post(
+        "/api/auth/mfa/totp/enroll",
+        headers={"Authorization": f"Bearer {login['access_token']}"},
+    )
+    assert enrollment_response.status_code == 201
+    mfa_login_response = second_client.post(
+        "/api/auth/login",
+        json={
+            "email": email,
+            "password": "ChangedStart123!",
+            "totp_code": totp_code(enrollment_response.json()["secret"]),
+        },
+    )
+    assert mfa_login_response.status_code == 200
+    listed_response = second_client.get(
+        "/api/admin/users",
+        headers={
+            "Authorization": f"Bearer {mfa_login_response.json()['access_token']}",
+        },
     )
     assert listed_response.status_code == 200
     assert [
@@ -212,6 +250,7 @@ def test_auth_login_uses_async_user_account_table_when_legacy_snapshot_is_unread
         "email": email,
         "display_name": "Legacy Free Login",
         "role": "leg_admin",
+        "mfa_satisfied": False,
     }
 
 

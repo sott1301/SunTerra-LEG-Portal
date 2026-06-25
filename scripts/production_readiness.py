@@ -140,6 +140,50 @@ def run_config_check() -> dict[str, Any]:
     }
 
 
+def run_private_pilot_checklist() -> dict[str, Any]:
+    return {
+        "alerts": [
+            "application-downtime",
+            "database-unreachable",
+            "mail-delivery-failures",
+            "critical-readiness-failures",
+        ],
+        "check": "private-pilot-hosting",
+        "pilot_access": "invitation-or-allowlist",
+        "private_hosting": "allowed-for-pilot",
+        "public_rollout_gate": [
+            "hosting-decision-private-or-managed",
+            "restore-test-passed",
+            "active-alerts",
+            "pilot-feedback-reviewed",
+            "14-stable-days-after-real-package",
+            "legal-data-protection-community-process-approval",
+            "explicit-public-rollout-approval",
+        ],
+        "readiness_probes": [
+            "application-health",
+            "database-readiness",
+            "auth-readiness",
+            "smtp-readiness",
+        ],
+        "requirements": [
+            "tls-domain",
+            "postgres-runtime",
+            "configured-cors-origins",
+            "production-secret-key",
+            "smtp-delivery",
+            "bootstrap-admin",
+            "admin-totp-mfa",
+            "daily-encrypted-offsite-backups",
+            "documented-restore-test",
+            "health-readiness-checks",
+            "alert-routing",
+            "SUNTERRA_PUBLIC_ROLLOUT_APPROVED",
+        ],
+        "status": "ok",
+    }
+
+
 def sqlite_connection(path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(path, timeout=30)
     connection.execute("pragma busy_timeout = 30000")
@@ -480,6 +524,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate required production configuration without printing secrets.",
     )
 
+    subparsers.add_parser(
+        "private-pilot-checklist",
+        help="Print the private pilot hosting and rollout-gate readiness checklist.",
+    )
+
     scaling_gates = subparsers.add_parser(
         "scaling-gates",
         help="Run DB scaling and concurrent-write gates for registered users.",
@@ -511,6 +560,10 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "check-production-config":
             write_json(run_config_check())
+            return 0
+
+        if args.command == "private-pilot-checklist":
+            write_json(run_private_pilot_checklist())
             return 0
 
         if args.command == "scaling-gates":

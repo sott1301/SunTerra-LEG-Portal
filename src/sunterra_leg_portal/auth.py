@@ -18,11 +18,15 @@ class Role(StrEnum):
     PLATFORM_ADMIN = "platform_admin"
 
 
+ADMIN_MFA_ROLES = {Role.LEG_ADMIN, Role.PARTNER_ADMIN, Role.PLATFORM_ADMIN}
+
+
 class CurrentUser(BaseModel):
     id: str
     email: str
     display_name: str
     role: Role
+    mfa_satisfied: bool = False
 
 
 DEV_USERS: dict[Role, CurrentUser] = {
@@ -37,23 +41,30 @@ DEV_USERS: dict[Role, CurrentUser] = {
         email="leg-admin@example.test",
         display_name="LEG Admin Demo",
         role=Role.LEG_ADMIN,
+        mfa_satisfied=True,
     ),
     Role.PARTNER_ADMIN: CurrentUser(
         id="dev-partner-admin",
         email="partner-admin@example.test",
         display_name="Partner Admin Demo",
         role=Role.PARTNER_ADMIN,
+        mfa_satisfied=True,
     ),
     Role.PLATFORM_ADMIN: CurrentUser(
         id="dev-platform-admin",
         email="platform-admin@example.test",
         display_name="Plattform Admin Demo",
         role=Role.PLATFORM_ADMIN,
+        mfa_satisfied=True,
     ),
 }
 DEV_PARTICIPANT_USERS: dict[str, CurrentUser] = {}
 JWT_ACCESS_TOKEN_SECONDS = 8 * 60 * 60
 _jwt_user_resolver: Callable[[str], CurrentUser | None] | None = None
+
+
+def development_auth_enabled() -> bool:
+    return os.environ.get("SUNTERRA_ENV") != "production"
 
 
 def _base64url_encode(value: bytes) -> str:
@@ -94,6 +105,7 @@ def create_access_token(user: CurrentUser) -> str:
         "email": user.email,
         "display_name": user.display_name,
         "role": user.role.value,
+        "mfa_satisfied": user.mfa_satisfied,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=JWT_ACCESS_TOKEN_SECONDS)).timestamp()),
     }
@@ -145,13 +157,16 @@ def _current_user_from_jwt(token: str) -> CurrentUser:
                 detail="Unknown or inactive user",
             )
 
-        return user
+        return user.model_copy(
+            update={"mfa_satisfied": bool(payload.get("mfa_satisfied", False))},
+        )
 
     return CurrentUser(
         id=user_id,
         email=str(payload.get("email", "")),
         display_name=str(payload.get("display_name", "")),
         role=role,
+        mfa_satisfied=bool(payload.get("mfa_satisfied", False)),
     )
 
 
@@ -179,6 +194,11 @@ def current_user(authorization: str | None = Header(default=None)) -> CurrentUse
     token = authorization.removeprefix("Bearer ")
     if not token.startswith("dev:"):
         return _current_user_from_jwt(token)
+    if not development_auth_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Development authentication is disabled in production",
+        )
 
     role_name = token.removeprefix("dev:")
     participant_prefix = f"{Role.PARTICIPANT.value}:"
@@ -205,6 +225,26 @@ def current_user(authorization: str | None = Header(default=None)) -> CurrentUse
 
 
 def require_roles(*allowed_roles: Role) -> Callable[[CurrentUser], CurrentUser]:
+    def dependency(user: CurrentUser = Depends(current_user)) -> CurrentUser:
+        if user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Role is not allowed",
+            )
+        if user.role in ADMIN_MFA_ROLES and not user.mfa_satisfied:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin MFA required",
+            )
+
+        return user
+
+    return dependency
+
+
+def require_roles_before_mfa(
+    *allowed_roles: Role,
+) -> Callable[[CurrentUser], CurrentUser]:
     def dependency(user: CurrentUser = Depends(current_user)) -> CurrentUser:
         if user.role not in allowed_roles:
             raise HTTPException(

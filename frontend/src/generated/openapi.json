@@ -220,6 +220,112 @@
         "title": "AdminMutationRequestRead",
         "type": "object"
       },
+      "AdminPartnerTaskMutationRead": {
+        "properties": {
+          "effective_date": {
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "mutation_request_id": {
+            "title": "Mutation Request Id",
+            "type": "string"
+          },
+          "mutation_type": {
+            "title": "Mutation Type",
+            "type": "string"
+          },
+          "participant_id": {
+            "title": "Participant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_request_id",
+          "participant_id",
+          "mutation_type",
+          "effective_date"
+        ],
+        "title": "AdminPartnerTaskMutationRead",
+        "type": "object"
+      },
+      "AdminPartnerTaskRead": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "effective_date": {
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "leg_id": {
+            "title": "Leg Id",
+            "type": "string"
+          },
+          "package_id": {
+            "title": "Package Id",
+            "type": "string"
+          },
+          "quarter": {
+            "title": "Quarter",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "record_count": {
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/AdminPartnerTaskMutationRead"
+            },
+            "title": "Records",
+            "type": "array"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "package_id",
+          "leg_id",
+          "quarter",
+          "effective_date",
+          "status",
+          "created_at",
+          "record_count",
+          "records"
+        ],
+        "title": "AdminPartnerTaskRead",
+        "type": "object"
+      },
       "AuditEventRead": {
         "properties": {
           "action": {
@@ -474,6 +580,11 @@
             "title": "Id",
             "type": "string"
           },
+          "mfa_satisfied": {
+            "default": false,
+            "title": "Mfa Satisfied",
+            "type": "boolean"
+          },
           "role": {
             "$ref": "#/components/schemas/Role"
           }
@@ -579,6 +690,53 @@
           "published_at"
         ],
         "title": "DocumentVersionRead",
+        "type": "object"
+      },
+      "EligibilityReviewDecision": {
+        "properties": {
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "reason"
+        ],
+        "title": "EligibilityReviewDecision",
+        "type": "object"
+      },
+      "EligibilityReviewRead": {
+        "properties": {
+          "eligibility_review_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eligibility Review Reason"
+          },
+          "eligibility_status": {
+            "title": "Eligibility Status",
+            "type": "string"
+          },
+          "participant_id": {
+            "title": "Participant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "participant_id",
+          "eligibility_status"
+        ],
+        "title": "EligibilityReviewRead",
         "type": "object"
       },
       "EmailVerificationResponse": {
@@ -897,6 +1055,39 @@
         "title": "IdentityVerificationRead",
         "type": "object"
       },
+      "InterestRecordRead": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "status",
+          "created_at"
+        ],
+        "title": "InterestRecordRead",
+        "type": "object"
+      },
       "InvitationAcceptResponse": {
         "properties": {
           "access_token": {
@@ -934,6 +1125,17 @@
           "password": {
             "title": "Password",
             "type": "string"
+          },
+          "totp_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totp Code"
           }
         },
         "required": [
@@ -1063,6 +1265,35 @@
           "status_history"
         ],
         "title": "MutationPackageRead",
+        "type": "object"
+      },
+      "MutationPackageReadinessDecision": {
+        "properties": {
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "ready",
+          "reason"
+        ],
+        "title": "MutationPackageReadinessDecision",
         "type": "object"
       },
       "MutationPackageRecord": {
@@ -1449,6 +1680,89 @@
         "title": "MutationReviewDecision",
         "type": "object"
       },
+      "NetworkTopologyEntryCreate": {
+        "properties": {
+          "city": {
+            "title": "City",
+            "type": "string"
+          },
+          "metering_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metering Point Id"
+          },
+          "postal_code": {
+            "title": "Postal Code",
+            "type": "string"
+          },
+          "street": {
+            "title": "Street",
+            "type": "string"
+          }
+        },
+        "required": [
+          "street",
+          "postal_code",
+          "city"
+        ],
+        "title": "NetworkTopologyEntryCreate",
+        "type": "object"
+      },
+      "NetworkTopologyImportCreate": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/NetworkTopologyEntryCreate"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "source_name": {
+            "title": "Source Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_name",
+          "entries"
+        ],
+        "title": "NetworkTopologyImportCreate",
+        "type": "object"
+      },
+      "NetworkTopologyImportRead": {
+        "properties": {
+          "active_entries": {
+            "title": "Active Entries",
+            "type": "integer"
+          },
+          "imported_at": {
+            "title": "Imported At",
+            "type": "string"
+          },
+          "imported_entries": {
+            "title": "Imported Entries",
+            "type": "integer"
+          },
+          "source_name": {
+            "title": "Source Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_name",
+          "imported_entries",
+          "active_entries",
+          "imported_at"
+        ],
+        "title": "NetworkTopologyImportRead",
+        "type": "object"
+      },
       "ParticipantAccountSetup": {
         "properties": {
           "display_name": {
@@ -1643,6 +1957,21 @@
             "title": "Display Name",
             "type": "string"
           },
+          "eligibility_review_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eligibility Review Reason"
+          },
+          "eligibility_status": {
+            "title": "Eligibility Status",
+            "type": "string"
+          },
           "email": {
             "title": "Email",
             "type": "string"
@@ -1671,6 +2000,7 @@
           "leg_id",
           "leg_name",
           "membership_status",
+          "eligibility_status",
           "billing_notice"
         ],
         "title": "ParticipantMembershipRead",
@@ -2187,6 +2517,247 @@
         "title": "PartnerTaskRead",
         "type": "object"
       },
+      "PasswordResetConfirm": {
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ],
+        "title": "PasswordResetConfirm",
+        "type": "object"
+      },
+      "PasswordResetRequestCreate": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "PasswordResetRequestCreate",
+        "type": "object"
+      },
+      "PasswordResetStatusRead": {
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PasswordResetStatusRead",
+        "type": "object"
+      },
+      "PilotAllowlistCreate": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "PilotAllowlistCreate",
+        "type": "object"
+      },
+      "PilotAllowlistRead": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "created_at"
+        ],
+        "title": "PilotAllowlistRead",
+        "type": "object"
+      },
+      "PilotFeedbackCreate": {
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "message"
+        ],
+        "title": "PilotFeedbackCreate",
+        "type": "object"
+      },
+      "PilotFeedbackRead": {
+        "properties": {
+          "admin_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Note"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By"
+          },
+          "rollout_relevance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollout Relevance"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "user_email": {
+            "title": "User Email",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "user_role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "message",
+          "user_id",
+          "user_email",
+          "user_role",
+          "status",
+          "created_at"
+        ],
+        "title": "PilotFeedbackRead",
+        "type": "object"
+      },
+      "PilotFeedbackUpdate": {
+        "properties": {
+          "admin_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Note"
+          },
+          "rollout_relevance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollout Relevance"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PilotFeedbackUpdate",
+        "type": "object"
+      },
       "ReadinessStatus": {
         "properties": {
           "database": {
@@ -2226,6 +2797,17 @@
       },
       "SelfServiceOnboardingCreate": {
         "properties": {
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
           "display_name": {
             "anyOf": [
               {
@@ -2240,6 +2822,39 @@
           "email": {
             "title": "Email",
             "type": "string"
+          },
+          "metering_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metering Point Id"
+          },
+          "postal_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postal Code"
+          },
+          "street": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Street"
           }
         },
         "required": [
@@ -2255,8 +2870,15 @@
             "type": "string"
           },
           "dev_email_verification_token": {
-            "title": "Dev Email Verification Token",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dev Email Verification Token"
           },
           "identity_checkpoint": {
             "$ref": "#/components/schemas/IdentityCheckpointRead"
@@ -2283,6 +2905,24 @@
           "dev_email_verification_token"
         ],
         "title": "SelfServiceOnboardingResponse",
+        "type": "object"
+      },
+      "TotpEnrollmentResponse": {
+        "properties": {
+          "otpauth_url": {
+            "title": "Otpauth Url",
+            "type": "string"
+          },
+          "secret": {
+            "title": "Secret",
+            "type": "string"
+          }
+        },
+        "required": [
+          "secret",
+          "otpauth_url"
+        ],
+        "title": "TotpEnrollmentResponse",
         "type": "object"
       },
       "UserAccountCreate": {
@@ -2638,6 +3278,56 @@
           }
         },
         "summary": "Publish Document Version"
+      }
+    },
+    "/api/admin/interest-records": {
+      "get": {
+        "operationId": "admin_interest_records_api_admin_interest_records_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InterestRecordRead"
+                  },
+                  "title": "Response Admin Interest Records Api Admin Interest Records Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Interest Records"
       }
     },
     "/api/admin/mutation-packages": {
@@ -3043,6 +3733,71 @@
         "summary": "Attach Mutation Request File Evidence"
       }
     },
+    "/api/admin/mutation-requests/{mutation_request_id}/package-readiness": {
+      "post": {
+        "operationId": "check_mutation_package_readiness_api_admin_mutation_requests__mutation_request_id__package_readiness_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mutation_request_id",
+            "required": true,
+            "schema": {
+              "title": "Mutation Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MutationPackageReadinessDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminMutationRequestRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Mutation Package Readiness"
+      }
+    },
     "/api/admin/mutation-requests/{mutation_request_id}/review-decision": {
       "post": {
         "operationId": "review_mutation_request_api_admin_mutation_requests__mutation_request_id__review_decision_post",
@@ -3106,6 +3861,62 @@
           }
         },
         "summary": "Review Mutation Request"
+      }
+    },
+    "/api/admin/network-topology-entries": {
+      "post": {
+        "operationId": "import_network_topology_entries_api_admin_network_topology_entries_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkTopologyImportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkTopologyImportRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Network Topology Entries"
       }
     },
     "/api/admin/participant-invitations": {
@@ -3258,6 +4069,130 @@
         "summary": "Admin Participants"
       }
     },
+    "/api/admin/participants/{participant_id}/consent-evidence": {
+      "get": {
+        "operationId": "admin_participant_consent_evidence_api_admin_participants__participant_id__consent_evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "participant_id",
+            "required": true,
+            "schema": {
+              "title": "Participant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConsentEvidenceRead"
+                  },
+                  "title": "Response Admin Participant Consent Evidence Api Admin Participants  Participant Id  Consent Evidence Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Participant Consent Evidence"
+      }
+    },
+    "/api/admin/participants/{participant_id}/eligibility-review": {
+      "post": {
+        "operationId": "review_participant_eligibility_api_admin_participants__participant_id__eligibility_review_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "participant_id",
+            "required": true,
+            "schema": {
+              "title": "Participant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EligibilityReviewDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EligibilityReviewRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review Participant Eligibility"
+      }
+    },
     "/api/admin/participants/{participant_id}/identity-verification": {
       "get": {
         "operationId": "admin_participant_identity_verification_api_admin_participants__participant_id__identity_verification_get",
@@ -3367,6 +4302,227 @@
           }
         },
         "summary": "Create Partner Admin User"
+      }
+    },
+    "/api/admin/partner-tasks": {
+      "get": {
+        "operationId": "admin_partner_tasks_api_admin_partner_tasks_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminPartnerTaskRead"
+                  },
+                  "title": "Response Admin Partner Tasks Api Admin Partner Tasks Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Partner Tasks"
+      }
+    },
+    "/api/admin/pilot-allowlist": {
+      "post": {
+        "operationId": "allow_pilot_email_api_admin_pilot_allowlist_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PilotAllowlistCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PilotAllowlistRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Allow Pilot Email"
+      }
+    },
+    "/api/admin/pilot-feedback": {
+      "get": {
+        "operationId": "admin_pilot_feedback_api_admin_pilot_feedback_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PilotFeedbackRead"
+                  },
+                  "title": "Response Admin Pilot Feedback Api Admin Pilot Feedback Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Pilot Feedback"
+      }
+    },
+    "/api/admin/pilot-feedback/{feedback_id}": {
+      "patch": {
+        "operationId": "update_pilot_feedback_review_api_admin_pilot_feedback__feedback_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "title": "Feedback Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PilotFeedbackUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PilotFeedbackRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Pilot Feedback Review"
       }
     },
     "/api/admin/users": {
@@ -3604,6 +4760,43 @@
       }
     },
     "/api/auth/email-verifications/{token}/verify": {
+      "get": {
+        "operationId": "verify_participant_email_api_auth_email_verifications__token__verify_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Participant Email"
+      },
       "post": {
         "operationId": "verify_participant_email_api_auth_email_verifications__token__verify_post",
         "parameters": [
@@ -3643,6 +4836,43 @@
       }
     },
     "/api/auth/invitations/{token}/accept": {
+      "get": {
+        "operationId": "accept_participant_invitation_api_auth_invitations__token__accept_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationAcceptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Participant Invitation"
+      },
       "post": {
         "operationId": "accept_participant_invitation_api_auth_invitations__token__accept_post",
         "parameters": [
@@ -3719,6 +4949,52 @@
         "summary": "Login"
       }
     },
+    "/api/auth/mfa/totp/enroll": {
+      "post": {
+        "operationId": "enroll_totp_mfa_api_auth_mfa_totp_enroll_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpEnrollmentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enroll Totp Mfa"
+      }
+    },
     "/api/auth/participant-account-setup": {
       "post": {
         "operationId": "setup_participant_account_api_auth_participant_account_setup_post",
@@ -3773,6 +5049,82 @@
           }
         },
         "summary": "Setup Participant Account"
+      }
+    },
+    "/api/auth/password-reset/confirm": {
+      "post": {
+        "operationId": "confirm_password_reset_api_auth_password_reset_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetStatusRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Password Reset"
+      }
+    },
+    "/api/auth/password-reset/request": {
+      "post": {
+        "operationId": "request_password_reset_api_auth_password_reset_request_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetRequestCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetStatusRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Password Reset"
       }
     },
     "/api/auth/self-service-onboarding-requests": {
@@ -4788,6 +6140,62 @@
           }
         },
         "summary": "Partner Tasks"
+      }
+    },
+    "/api/pilot-feedback": {
+      "post": {
+        "operationId": "submit_pilot_feedback_api_pilot_feedback_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PilotFeedbackCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PilotFeedbackRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Pilot Feedback"
       }
     },
     "/api/readiness": {

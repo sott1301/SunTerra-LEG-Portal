@@ -33,6 +33,50 @@ def verified_participant_token(client: TestClient, email: str) -> str:
     return accepted["access_token"]
 
 
+def accept_current_required_documents(client: TestClient, participant_token: str) -> None:
+    response = client.get("/api/admin/document-versions", headers=LEG_HEADERS)
+    assert response.status_code == 200
+    required_document_keys = {
+        "privacy_notice",
+        "portal_terms",
+        "leg_contract",
+    }
+    latest_required_documents = {}
+    for document in response.json():
+        if document["context"] != "participant_onboarding":
+            continue
+        if document["document_key"] not in required_document_keys:
+            continue
+        latest_required_documents[document["document_key"]] = document
+
+    for document_key in required_document_keys - latest_required_documents.keys():
+        published = client.post(
+            "/api/admin/document-versions",
+            headers=LEG_HEADERS,
+            json={
+                "document_key": document_key,
+                "title": f"Test {document_key}",
+                "version": f"test-{document_key}",
+                "content": f"Test content for {document_key}.",
+                "context": "participant_onboarding",
+            },
+        )
+        assert published.status_code == 201
+        latest_required_documents[document_key] = published.json()
+
+    for document in latest_required_documents.values():
+        consent = client.post(
+            "/api/participants/me/consent-evidence",
+            headers={"Authorization": f"Bearer {participant_token}"},
+            json={
+                "document_version_id": document["id"],
+                "context": "participant_onboarding",
+                "accepted": True,
+            },
+        )
+        assert consent.status_code == 201
+
+
 def create_approved_package(
     client: TestClient,
     *,
@@ -41,6 +85,7 @@ def create_approved_package(
     submitted_on: str,
 ) -> dict:
     participant_token = verified_participant_token(client, email)
+    accept_current_required_documents(client, participant_token)
     submitted = client.post(
         "/api/participants/me/mutation-requests",
         headers={"Authorization": f"Bearer {participant_token}"},
@@ -58,9 +103,9 @@ def create_approved_package(
         },
     ).json()
     approved = client.post(
-        f"/api/admin/mutation-requests/{submitted['id']}/review-decision",
+        f"/api/admin/mutation-requests/{submitted['id']}/package-readiness",
         headers=LEG_HEADERS,
-        json={"decision": "approved"},
+        json={"ready": True, "reason": "Paketbereit-Check bestanden."},
     )
     package_response = client.post(
         "/api/admin/mutation-packages",
@@ -265,6 +310,92 @@ def test_partner_admin_can_list_follow_up_tasks_for_question_status() -> None:
     assert "actor_id" not in tasks[0]
 
 
+def test_leg_admin_sees_partner_follow_up_task_without_mutating_request() -> None:
+    client = TestClient(app)
+    participant_token = verified_participant_token(
+        client,
+        "partner-leg-follow-up@example.test",
+    )
+    accept_current_required_documents(client, participant_token)
+    submitted = client.post(
+        "/api/participants/me/mutation-requests",
+        headers={"Authorization": f"Bearer {participant_token}"},
+        json={
+            "mutation_type": "address",
+            "mode": "regular",
+            "requested_quarter": "2038-Q1",
+            "submitted_on": "2037-12-31",
+            "new_address": {
+                "street": "Folgeweg 8",
+                "postal_code": "8254",
+                "city": "Basadingen",
+                "country": "CH",
+            },
+        },
+    ).json()
+    approved = client.post(
+        f"/api/admin/mutation-requests/{submitted['id']}/package-readiness",
+        headers=LEG_HEADERS,
+        json={"ready": True, "reason": "Paketbereit-Check bestanden."},
+    ).json()
+    package = client.post(
+        "/api/admin/mutation-packages",
+        headers=LEG_HEADERS,
+        json={"quarter": "2038-Q1"},
+    ).json()
+    status_response = client.post(
+        f"/api/partner/mutation-packages/{package['package_id']}/status",
+        headers=PARTNER_HEADERS,
+        json={"status": "question", "reference": "EW-RF-2038-1"},
+    )
+
+    tasks_response = client.get("/api/admin/partner-tasks", headers=LEG_HEADERS)
+    participant_history = client.get(
+        "/api/participants/me/mutation-requests",
+        headers={"Authorization": f"Bearer {participant_token}"},
+    )
+
+    assert status_response.status_code == 200
+    assert tasks_response.status_code == 200
+    tasks = [
+        task
+        for task in tasks_response.json()
+        if task["package_id"] == package["package_id"]
+    ]
+    assert tasks == [
+        {
+            "task_id": f"{package['package_id']}:question",
+            "package_id": package["package_id"],
+            "leg_id": "basadingen",
+            "quarter": "2038-Q1",
+            "effective_date": "2038-04-01",
+            "status": "question",
+            "reference": "EW-RF-2038-1",
+            "reason": None,
+            "created_at": status_response.json()["status_history"][-1]["created_at"],
+            "record_count": 1,
+            "records": [
+                {
+                    "mutation_request_id": submitted["id"],
+                    "participant_id": participant_token.removeprefix(
+                        "dev:participant:",
+                    ),
+                    "mutation_type": "address",
+                    "effective_date": "2038-04-01",
+                },
+            ],
+        },
+    ]
+    assert participant_history.status_code == 200
+    participant_record = next(
+        record
+        for record in participant_history.json()
+        if record["id"] == submitted["id"]
+    )
+    assert participant_record["status"] == approved["status"]
+    assert participant_record["reviewed_at"] == approved["reviewed_at"]
+
+
 def test_later_package_status_supersedes_partner_follow_up_task() -> None:
     client = TestClient(app)
     package = create_approved_package(
@@ -413,6 +544,7 @@ def test_partner_admin_can_inspect_redacted_package_detail() -> None:
             "accepted": True,
         },
     )
+    accept_current_required_documents(client, participant_token)
     submitted = client.post(
         "/api/participants/me/mutation-requests",
         headers={"Authorization": f"Bearer {participant_token}"},
@@ -442,9 +574,9 @@ def test_partner_admin_can_inspect_redacted_package_detail() -> None:
         },
     )
     client.post(
-        f"/api/admin/mutation-requests/{submitted['id']}/review-decision",
+        f"/api/admin/mutation-requests/{submitted['id']}/package-readiness",
         headers=LEG_HEADERS,
-        json={"decision": "approved"},
+        json={"ready": True, "reason": "Paketbereit-Check bestanden."},
     )
     package = client.post(
         "/api/admin/mutation-packages",

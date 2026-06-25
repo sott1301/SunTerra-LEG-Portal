@@ -30,6 +30,39 @@ class PortalParticipant(SQLModel, table=True):
     email_verified: bool
     phone_number: str | None = None
     preferred_contact_channel: str = "email"
+    eligibility_status: str = "approved"
+    eligibility_review_reason: str | None = None
+
+
+class PortalNetworkTopologyEntry(SQLModel, table=True):
+    __tablename__ = "portal_network_topology_entries"
+
+    id: str = Field(primary_key=True)
+    leg_id: str
+    source_name: str
+    metering_point_id: str | None = None
+    street: str
+    postal_code: str
+    city: str
+    active: bool
+    imported_at: str
+
+
+class PortalInterestRecord(SQLModel, table=True):
+    __tablename__ = "portal_interest_records"
+
+    email: str = Field(primary_key=True)
+    id: str
+    display_name: str
+    status: str
+    created_at: str
+
+
+class PortalPilotAllowlistEntry(SQLModel, table=True):
+    __tablename__ = "portal_pilot_allowlist_entries"
+
+    email: str = Field(primary_key=True)
+    created_at: str
 
 
 class PortalParticipantInvitation(SQLModel, table=True):
@@ -149,6 +182,8 @@ class PortalUserAccount(SQLModel, table=True):
     organization: str | None = None
     password_hash: str | None = None
     password_salt: str | None = None
+    mfa_totp_secret: str | None = None
+    mfa_totp_enabled: bool = False
 
 
 class PortalCommunicationEvent(SQLModel, table=True):
@@ -159,6 +194,34 @@ class PortalCommunicationEvent(SQLModel, table=True):
     event_type: str
     recipient_email: str
     status: str
+    created_at: str
+
+
+class PortalPasswordResetToken(SQLModel, table=True):
+    __tablename__ = "portal_password_reset_tokens"
+
+    token: str = Field(primary_key=True)
+    account_id: str
+    email: str
+    expires_at: str
+    used_at: str | None = None
+
+
+class PortalPilotFeedback(SQLModel, table=True):
+    __tablename__ = "portal_pilot_feedback"
+
+    id: str = Field(primary_key=True)
+    category: str
+    message: str
+    context: str | None = None
+    user_id: str
+    user_email: str
+    user_role: str
+    status: str
+    rollout_relevance: str | None = None
+    admin_note: str | None = None
+    reviewed_at: str | None = None
+    reviewed_by: str | None = None
     created_at: str
 
 

@@ -38,6 +38,25 @@ export type components = {
       "status": string;
       "submitted_at": string;
     };
+    "AdminPartnerTaskMutationRead": {
+      "effective_date": string;
+      "mutation_request_id": string;
+      "mutation_type": string;
+      "participant_id": string;
+    };
+    "AdminPartnerTaskRead": {
+      "created_at": string;
+      "effective_date": string;
+      "leg_id": string;
+      "package_id": string;
+      "quarter": string;
+      "reason"?: string | null;
+      "record_count": number;
+      "records": Array<components["schemas"]["AdminPartnerTaskMutationRead"]>;
+      "reference"?: string | null;
+      "status": string;
+      "task_id": string;
+    };
     "AuditEventRead": {
       "action": string;
       "actor_role": string;
@@ -89,6 +108,7 @@ export type components = {
       "display_name": string;
       "email": string;
       "id": string;
+      "mfa_satisfied"?: boolean;
       "role": components["schemas"]["Role"];
     };
     "DatabaseReadinessStatus": {
@@ -110,6 +130,15 @@ export type components = {
       "published_at": string;
       "title": string;
       "version": string;
+    };
+    "EligibilityReviewDecision": {
+      "decision": string;
+      "reason": string;
+    };
+    "EligibilityReviewRead": {
+      "eligibility_review_reason"?: string | null;
+      "eligibility_status": string;
+      "participant_id": string;
     };
     "EmailVerificationResponse": {
       "email_verified": boolean;
@@ -176,6 +205,13 @@ export type components = {
       "source": string;
       "verified_at"?: string | null;
     };
+    "InterestRecordRead": {
+      "created_at": string;
+      "display_name": string;
+      "email": string;
+      "id": string;
+      "status": string;
+    };
     "InvitationAcceptResponse": {
       "access_token": string;
       "email_verification_required": boolean;
@@ -185,6 +221,7 @@ export type components = {
     "LoginRequest": {
       "email": string;
       "password": string;
+      "totp_code"?: string | null;
     };
     "MutableMutationPackageStatusEvent": {
       "actor_id": string;
@@ -207,6 +244,11 @@ export type components = {
       "records": Array<components["schemas"]["MutationPackageRecord"]>;
       "schema_version": string;
       "status_history": Array<components["schemas"]["MutationPackageStatusEvent"]>;
+    };
+    "MutationPackageReadinessDecision": {
+      "ready": boolean;
+      "reason": string;
+      "status"?: string | null;
     };
     "MutationPackageRecord": {
       "effective_date": string;
@@ -261,6 +303,22 @@ export type components = {
       "decision": string;
       "reason"?: string | null;
     };
+    "NetworkTopologyEntryCreate": {
+      "city": string;
+      "metering_point_id"?: string | null;
+      "postal_code": string;
+      "street": string;
+    };
+    "NetworkTopologyImportCreate": {
+      "entries": Array<components["schemas"]["NetworkTopologyEntryCreate"]>;
+      "source_name": string;
+    };
+    "NetworkTopologyImportRead": {
+      "active_entries": number;
+      "imported_at": string;
+      "imported_entries": number;
+      "source_name": string;
+    };
     "ParticipantAccountSetup": {
       "display_name": string;
       "password": string;
@@ -299,6 +357,8 @@ export type components = {
     "ParticipantMembershipRead": {
       "billing_notice": string;
       "display_name": string;
+      "eligibility_review_reason"?: string | null;
+      "eligibility_status": string;
       "email": string;
       "leg_id": string;
       "leg_name": string;
@@ -393,6 +453,48 @@ export type components = {
       "status": string;
       "task_id": string;
     };
+    "PasswordResetConfirm": {
+      "password": string;
+      "token": string;
+    };
+    "PasswordResetRequestCreate": {
+      "email": string;
+    };
+    "PasswordResetStatusRead": {
+      "status": string;
+    };
+    "PilotAllowlistCreate": {
+      "email": string;
+    };
+    "PilotAllowlistRead": {
+      "created_at": string;
+      "email": string;
+    };
+    "PilotFeedbackCreate": {
+      "category": string;
+      "context"?: string | null;
+      "message": string;
+    };
+    "PilotFeedbackRead": {
+      "admin_note"?: string | null;
+      "category": string;
+      "context"?: string | null;
+      "created_at": string;
+      "id": string;
+      "message": string;
+      "reviewed_at"?: string | null;
+      "reviewed_by"?: string | null;
+      "rollout_relevance"?: string | null;
+      "status": string;
+      "user_email": string;
+      "user_id": string;
+      "user_role": components["schemas"]["Role"];
+    };
+    "PilotFeedbackUpdate": {
+      "admin_note"?: string | null;
+      "rollout_relevance"?: string | null;
+      "status": string;
+    };
     "ReadinessStatus": {
       "database": components["schemas"]["DatabaseReadinessStatus"];
       "service": string;
@@ -401,16 +503,24 @@ export type components = {
     };
     "Role": "participant" | "leg_admin" | "partner_admin" | "platform_admin";
     "SelfServiceOnboardingCreate": {
+      "city"?: string | null;
       "display_name"?: string | null;
       "email": string;
+      "metering_point_id"?: string | null;
+      "postal_code"?: string | null;
+      "street"?: string | null;
     };
     "SelfServiceOnboardingResponse": {
       "access_token": string;
-      "dev_email_verification_token": string;
+      "dev_email_verification_token": string | null;
       "identity_checkpoint": components["schemas"]["IdentityCheckpointRead"];
       "participant_id": string;
       "participant_status": string;
       "token_type": string;
+    };
+    "TotpEnrollmentResponse": {
+      "otpauth_url": string;
+      "secret": string;
     };
     "UserAccountCreate": {
       "display_name": string;

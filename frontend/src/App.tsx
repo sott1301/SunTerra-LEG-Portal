@@ -29,15 +29,25 @@ type SelfServiceOnboardingResponse = ApiSchemas["SelfServiceOnboardingResponse"]
 
 type SelfServiceOnboardingCreate = ApiSchemas["SelfServiceOnboardingCreate"];
 
+type InterestRecord = ApiSchemas["InterestRecordRead"];
+
 type ParticipantAccountSetup = ApiSchemas["ParticipantAccountSetup"];
 
 type AuthTokenResponse = ApiSchemas["AuthTokenResponse"];
+
+type TotpEnrollmentResponse = ApiSchemas["TotpEnrollmentResponse"];
 
 type UserAccount = ApiSchemas["UserAccountRead"];
 
 type UserAccountCreate = ApiSchemas["UserAccountCreate"];
 
 type UserPasswordReset = ApiSchemas["UserPasswordReset"];
+
+type PasswordResetRequestCreate = ApiSchemas["PasswordResetRequestCreate"];
+
+type PasswordResetConfirm = ApiSchemas["PasswordResetConfirm"];
+
+type PasswordResetStatus = ApiSchemas["PasswordResetStatusRead"];
 
 type PartnerAdminUserCreate = ApiSchemas["PartnerAdminUserCreate"];
 
@@ -52,6 +62,25 @@ type CurrentDocument = ApiSchemas["CurrentDocumentRead"];
 type ConsentEvidenceCreate = ApiSchemas["ConsentEvidenceCreate"];
 
 type ConsentEvidence = ApiSchemas["ConsentEvidenceRead"];
+
+const REQUIRED_PARTICIPANT_DOCUMENT_KEYS = [
+  "privacy_notice",
+  "portal_terms",
+  "leg_contract",
+] as const;
+
+function isCurrentDocument(value: Partial<CurrentDocument>): value is CurrentDocument {
+  return (
+    typeof value.id === "string" &&
+    typeof value.document_key === "string" &&
+    typeof value.title === "string" &&
+    typeof value.version === "string" &&
+    typeof value.content === "string" &&
+    typeof value.document_hash === "string" &&
+    typeof value.context === "string" &&
+    typeof value.published_at === "string"
+  );
+}
 
 type ParticipantContactChannels = ApiSchemas["ParticipantContactChannelsRead"];
 
@@ -126,6 +155,12 @@ type PartnerMemberRegister = ApiSchemas["PartnerMemberRegisterRead"];
 
 type PartnerTask = ApiSchemas["PartnerTaskRead"];
 
+type PilotFeedbackCreate = ApiSchemas["PilotFeedbackCreate"];
+
+type PilotFeedback = ApiSchemas["PilotFeedbackRead"];
+
+type PilotFeedbackUpdate = ApiSchemas["PilotFeedbackUpdate"];
+
 type PartnerStatusDraft = {
   status: PartnerPackageStatusUpdate;
   reference: string;
@@ -166,6 +201,7 @@ const demoRoles: Array<{ role: Role; label: string; workspaceTitle: string }> = 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 const accessTokenStorageKey = "sunterra.accessToken";
 const devTokenStorageKey = "sunterra.devToken";
+const developmentUiEnabled = () => import.meta.env.DEV;
 const emptyFileEvidenceDraft: FileEvidenceDraft = {
   version: "",
   filename: "",
@@ -207,6 +243,7 @@ function normalizedPortalPath(pathname: string) {
   return pathname === "/" ||
     pathname === "/registrieren" ||
     pathname === "/login" ||
+    pathname === "/reset-password" ||
     pathname === "/app"
     ? pathname
     : "/";
@@ -214,6 +251,27 @@ function normalizedPortalPath(pathname: string) {
 
 function roleLabel(role: Role) {
   return demoRoles.find((demoRole) => demoRole.role === role)?.label ?? role;
+}
+
+function adminMfaRequired(user: CurrentUser) {
+  return user.role !== "participant" && user.mfa_satisfied === false;
+}
+
+function membershipStatusLabel(status: string) {
+  switch (status) {
+    case "pending_email_verification":
+      return "E-Mail-Verifikation offen";
+    case "pending_required_documents":
+      return "Pflichtdokumente offen";
+    case "pending_eligibility_review":
+      return "Teilnahmeberechtigung in Pruefung";
+    case "eligibility_stopped":
+      return "Teilnahmeberechtigung gestoppt";
+    case "active":
+      return "Mitgliedschaft aktiv";
+    default:
+      return status;
+  }
 }
 
 function textToBase64(value: string) {
@@ -302,6 +360,7 @@ function mutationDetailLines(
 }
 
 export function App() {
+  const showDevelopmentUi = developmentUiEnabled();
   const [backend, setBackend] = useState<BackendState>({ kind: "checking" });
   const [session, setSession] = useState<SessionState>({ kind: "anonymous" });
   const [routePath, setRoutePath] = useState(() =>
@@ -309,6 +368,7 @@ export function App() {
   );
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [loginTotpCode, setLoginTotpCode] = useState("");
   const [loginError, setLoginError] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteDisplayName, setInviteDisplayName] = useState("");
@@ -317,8 +377,15 @@ export function App() {
   const [onboardingToken, setOnboardingToken] = useState("");
   const [selfServiceEmail, setSelfServiceEmail] = useState("");
   const [selfServiceDisplayName, setSelfServiceDisplayName] = useState("");
+  const [selfServiceMeteringPointId, setSelfServiceMeteringPointId] =
+    useState("");
+  const [selfServiceStreet, setSelfServiceStreet] = useState("");
+  const [selfServicePostalCode, setSelfServicePostalCode] = useState("");
+  const [selfServiceCity, setSelfServiceCity] = useState("");
   const [selfServiceOnboarding, setSelfServiceOnboarding] =
     useState<SelfServiceOnboardingResponse | null>(null);
+  const [selfServiceInterest, setSelfServiceInterest] =
+    useState<InterestRecord | null>(null);
   const [participantSetupDisplayName, setParticipantSetupDisplayName] =
     useState("");
   const [participantSetupPassword, setParticipantSetupPassword] = useState("");
@@ -328,15 +395,19 @@ export function App() {
     useState<EmailVerificationResponse | null>(null);
   const [participantMembership, setParticipantMembership] =
     useState<ParticipantMembership | null>(null);
+  const [documentKey, setDocumentKey] = useState("portal_terms");
   const [documentTitle, setDocumentTitle] = useState("");
   const [documentVersion, setDocumentVersion] = useState("");
   const [documentContent, setDocumentContent] = useState("");
   const [publishedDocumentVersion, setPublishedDocumentVersion] =
     useState<DocumentVersion | null>(null);
-  const [currentDocument, setCurrentDocument] =
-    useState<CurrentDocument | null>(null);
-  const [consentChecked, setConsentChecked] = useState(false);
-  const [consentSaved, setConsentSaved] = useState(false);
+  const [currentDocuments, setCurrentDocuments] = useState<CurrentDocument[]>([]);
+  const [consentCheckedByDocumentId, setConsentCheckedByDocumentId] = useState<
+    Record<string, boolean>
+  >({});
+  const [consentSavedByDocumentId, setConsentSavedByDocumentId] = useState<
+    Record<string, boolean>
+  >({});
   const [consentHistory, setConsentHistory] = useState<ConsentEvidence[]>([]);
   const [contactChannels, setContactChannels] =
     useState<ParticipantContactChannels | null>(null);
@@ -345,6 +416,12 @@ export function App() {
     useState<PreferredContactChannel>("email");
   const [contactChannelSaved, setContactChannelSaved] = useState(false);
   const [contactChannelError, setContactChannelError] = useState("");
+  const [pilotFeedbackCategory, setPilotFeedbackCategory] = useState("process");
+  const [pilotFeedbackContext, setPilotFeedbackContext] = useState("");
+  const [pilotFeedbackMessage, setPilotFeedbackMessage] = useState("");
+  const [submittedPilotFeedback, setSubmittedPilotFeedback] =
+    useState<PilotFeedback | null>(null);
+  const [pilotFeedbackError, setPilotFeedbackError] = useState("");
   const [mutationMode, setMutationMode] = useState<MutationMode>("regular");
   const [mutationType, setMutationType] = useState<MutationType>("address");
   const [mutationQuarter, setMutationQuarter] = useState("2026-Q3");
@@ -370,6 +447,13 @@ export function App() {
     {},
   );
   const [adminMutationError, setAdminMutationError] = useState("");
+  const [adminPilotFeedback, setAdminPilotFeedback] = useState<PilotFeedback[]>(
+    [],
+  );
+  const [adminPilotFeedbackNotes, setAdminPilotFeedbackNotes] = useState<
+    Record<string, string>
+  >({});
+  const [adminPilotFeedbackError, setAdminPilotFeedbackError] = useState("");
   const [fileEvidenceDrafts, setFileEvidenceDrafts] = useState<
     Record<string, FileEvidenceDraft>
   >({});
@@ -409,6 +493,12 @@ export function App() {
   const [passwordResetValue, setPasswordResetValue] = useState("");
   const [passwordResetResult, setPasswordResetResult] =
     useState<UserAccount | null>(null);
+  const [publicPasswordResetEmail, setPublicPasswordResetEmail] = useState("");
+  const [publicPasswordResetPassword, setPublicPasswordResetPassword] =
+    useState("");
+  const [publicPasswordResetStatus, setPublicPasswordResetStatus] =
+    useState("");
+  const [publicPasswordResetError, setPublicPasswordResetError] = useState("");
   const [partnerAdminEmail, setPartnerAdminEmail] = useState("");
   const [partnerAdminDisplayName, setPartnerAdminDisplayName] = useState("");
   const [partnerAdminOrganization, setPartnerAdminOrganization] = useState("");
@@ -416,6 +506,9 @@ export function App() {
   const [createdPartnerAdmin, setCreatedPartnerAdmin] =
     useState<UserAccount | null>(null);
   const [partnerAdminError, setPartnerAdminError] = useState("");
+  const [totpEnrollment, setTotpEnrollment] =
+    useState<TotpEnrollmentResponse | null>(null);
+  const [totpEnrollmentError, setTotpEnrollmentError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -480,6 +573,10 @@ export function App() {
       window.localStorage.removeItem(devTokenStorageKey);
       setSession({ kind: "anonymous" });
       setParticipantMembership(null);
+      setCurrentDocuments([]);
+      setConsentHistory([]);
+      setConsentCheckedByDocumentId({});
+      setConsentSavedByDocumentId({});
       return;
     }
 
@@ -487,17 +584,25 @@ export function App() {
     setSession({ kind: "authenticated", token, user });
     if (user.role === "participant") {
       void loadCurrentDocument(token);
+      void loadConsentHistory(token);
       void loadContactChannels(token);
       void loadParticipantMembership(token);
     } else {
       setParticipantMembership(null);
+      setCurrentDocuments([]);
+      setConsentHistory([]);
+      setConsentCheckedByDocumentId({});
+      setConsentSavedByDocumentId({});
     }
-    if (user.role === "leg_admin") {
+    if (!adminMfaRequired(user) && user.role === "leg_admin") {
       void loadAdminMutationRequests(token);
+      void loadAdminPilotFeedback(token);
     } else {
       setAdminMutationRequests([]);
+      setAdminPilotFeedback([]);
+      setAdminPilotFeedbackNotes({});
     }
-    if (user.role === "partner_admin") {
+    if (!adminMfaRequired(user) && user.role === "partner_admin") {
       void loadPartnerMutationPackages(token);
       void loadPartnerMemberRegister(token);
       void loadPartnerTasks(token);
@@ -507,10 +612,14 @@ export function App() {
       setPartnerMemberRegister(null);
       setPartnerTasks([]);
     }
-    if (user.role === "platform_admin") {
+    if (!adminMfaRequired(user) && user.role === "platform_admin") {
       void loadUserAccounts(token);
     } else {
       setUserAccounts([]);
+    }
+    if (!adminMfaRequired(user)) {
+      setTotpEnrollment(null);
+      setTotpEnrollmentError("");
     }
   }
 
@@ -530,6 +639,9 @@ export function App() {
       email: loginEmail,
       password: loginPassword,
     };
+    if (loginTotpCode.trim()) {
+      loginRequest.totp_code = loginTotpCode.trim();
+    }
     const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
       method: "POST",
       headers: {
@@ -546,6 +658,8 @@ export function App() {
     const auth = (await response.json()) as AuthTokenResponse;
     window.localStorage.setItem(accessTokenStorageKey, auth.access_token);
     window.localStorage.removeItem(devTokenStorageKey);
+    setTotpEnrollment(null);
+    setTotpEnrollmentError("");
     setSession({
       kind: "authenticated",
       token: auth.access_token,
@@ -560,7 +674,35 @@ export function App() {
     window.localStorage.removeItem(devTokenStorageKey);
     setSession({ kind: "anonymous" });
     setParticipantMembership(null);
+    setCurrentDocuments([]);
+    setConsentHistory([]);
+    setConsentCheckedByDocumentId({});
+    setConsentSavedByDocumentId({});
+    setTotpEnrollment(null);
+    setTotpEnrollmentError("");
     navigate("/");
+  }
+
+  async function enrollTotpMfa() {
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setTotpEnrollmentError("");
+    const response = await fetch(`${apiBaseUrl}/api/auth/mfa/totp/enroll`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+      },
+    });
+
+    if (response.ok) {
+      const enrollment = (await response.json()) as TotpEnrollmentResponse;
+      setTotpEnrollment(enrollment);
+      return;
+    }
+
+    setTotpEnrollmentError("TOTP-MFA konnte nicht eingerichtet werden");
   }
 
   async function createParticipantInvitation(event: FormEvent<HTMLFormElement>) {
@@ -598,6 +740,21 @@ export function App() {
     const onboardingCreate: SelfServiceOnboardingCreate = {
       email: selfServiceEmail,
     };
+    if (selfServiceDisplayName.trim()) {
+      onboardingCreate.display_name = selfServiceDisplayName.trim();
+    }
+    if (selfServiceMeteringPointId.trim()) {
+      onboardingCreate.metering_point_id = selfServiceMeteringPointId.trim();
+    }
+    if (selfServiceStreet.trim()) {
+      onboardingCreate.street = selfServiceStreet.trim();
+    }
+    if (selfServicePostalCode.trim()) {
+      onboardingCreate.postal_code = selfServicePostalCode.trim();
+    }
+    if (selfServiceCity.trim()) {
+      onboardingCreate.city = selfServiceCity.trim();
+    }
     const response = await fetch(
       `${apiBaseUrl}/api/auth/self-service-onboarding-requests`,
       {
@@ -609,9 +766,18 @@ export function App() {
       },
     );
 
+    if (response.status === 202) {
+      const interest = (await response.json()) as InterestRecord;
+      setSelfServiceInterest(interest);
+      setSelfServiceOnboarding(null);
+      setIdentityCheckpoint(null);
+      return;
+    }
+
     if (response.ok) {
       const onboarding =
         (await response.json()) as SelfServiceOnboardingResponse;
+      setSelfServiceInterest(null);
       setSelfServiceOnboarding(onboarding);
       setIdentityCheckpoint(onboarding.identity_checkpoint);
       setParticipantSetupDisplayName("");
@@ -620,14 +786,18 @@ export function App() {
   }
 
   async function verifySelfServiceEmail() {
-    if (selfServiceOnboarding === null) {
+    if (
+      selfServiceOnboarding === null ||
+      selfServiceOnboarding.dev_email_verification_token === null
+    ) {
       return;
     }
 
+    const verificationToken = selfServiceOnboarding.dev_email_verification_token;
     const verifyResponse = await fetch(
       (
         `${apiBaseUrl}/api/auth/email-verifications/` +
-        `${selfServiceOnboarding.dev_email_verification_token}/verify`
+        `${verificationToken}/verify`
       ),
       {
         method: "POST",
@@ -708,7 +878,7 @@ export function App() {
     }
 
     const documentVersionCreate: DocumentVersionCreate = {
-      document_key: "portal_terms",
+      document_key: documentKey,
       title: documentTitle,
       version: documentVersion,
       content: documentContent,
@@ -746,19 +916,25 @@ export function App() {
   }
 
   async function loadCurrentDocument(token: string) {
-    const response = await fetch(
-      `${apiBaseUrl}/api/documents/current?document_key=portal_terms`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
+    const documents: CurrentDocument[] = [];
+    for (const documentKey of REQUIRED_PARTICIPANT_DOCUMENT_KEYS) {
+      const response = await fetch(
+        `${apiBaseUrl}/api/documents/current?document_key=${documentKey}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
-      },
-    );
+      );
 
-    if (response.ok) {
-      const document = (await response.json()) as CurrentDocument;
-      setCurrentDocument(document);
+      if (response.ok) {
+        const document = (await response.json()) as Partial<CurrentDocument>;
+        if (isCurrentDocument(document)) {
+          documents.push(document);
+        }
+      }
     }
+    setCurrentDocuments(documents);
   }
 
   async function loadConsentHistory(token: string) {
@@ -769,8 +945,8 @@ export function App() {
     });
 
     if (response.ok) {
-      const history = (await response.json()) as ConsentEvidence[];
-      setConsentHistory(history);
+      const history = (await response.json()) as unknown;
+      setConsentHistory(Array.isArray(history) ? (history as ConsentEvidence[]) : []);
     }
   }
 
@@ -805,6 +981,23 @@ export function App() {
       const records = (await response.json()) as AdminMutationRequest[];
       setAdminMutationRequests(records);
     }
+  }
+
+  async function loadAdminPilotFeedback(token: string) {
+    setAdminPilotFeedbackError("");
+    const response = await fetch(`${apiBaseUrl}/api/admin/pilot-feedback`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.ok) {
+      const records = (await response.json()) as PilotFeedback[];
+      setAdminPilotFeedback(Array.isArray(records) ? records : []);
+      return;
+    }
+
+    setAdminPilotFeedbackError("Pilotfeedback konnte nicht geladen werden");
   }
 
   async function loadPartnerMutationPackages(token: string) {
@@ -988,6 +1181,65 @@ export function App() {
     }
   }
 
+  async function requestPublicPasswordReset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPublicPasswordResetError("");
+    setPublicPasswordResetStatus("");
+
+    const resetRequest: PasswordResetRequestCreate = {
+      email: publicPasswordResetEmail,
+    };
+    const response = await fetch(`${apiBaseUrl}/api/auth/password-reset/request`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(resetRequest),
+    });
+
+    if (!response.ok) {
+      setPublicPasswordResetError("Reset-Link konnte nicht gesendet werden");
+      return;
+    }
+
+    const status = (await response.json()) as PasswordResetStatus;
+    if (status.status === "password_reset_requested") {
+      setPublicPasswordResetStatus(
+        "Wenn ein aktives Konto existiert, wurde ein Reset-Link gesendet.",
+      );
+    }
+  }
+
+  async function confirmPublicPasswordReset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPublicPasswordResetError("");
+    setPublicPasswordResetStatus("");
+
+    const resetToken = new URLSearchParams(window.location.search).get("token") ?? "";
+    const resetConfirm: PasswordResetConfirm = {
+      token: resetToken,
+      password: publicPasswordResetPassword,
+    };
+    const response = await fetch(`${apiBaseUrl}/api/auth/password-reset/confirm`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(resetConfirm),
+    });
+
+    if (!response.ok) {
+      setPublicPasswordResetError("Passwort konnte nicht aktualisiert werden");
+      return;
+    }
+
+    const status = (await response.json()) as PasswordResetStatus;
+    if (status.status === "password_reset_completed") {
+      setPublicPasswordResetPassword("");
+      setPublicPasswordResetStatus("Passwort wurde aktualisiert");
+    }
+  }
+
   async function createPartnerAdminUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1066,6 +1318,91 @@ export function App() {
       typeof error.detail === "string"
         ? error.detail
         : "Kontaktkanäle konnten nicht gespeichert werden",
+    );
+  }
+
+  async function submitPilotFeedback(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setPilotFeedbackError("");
+    setSubmittedPilotFeedback(null);
+    const feedback: PilotFeedbackCreate = {
+      category: pilotFeedbackCategory,
+      message: pilotFeedbackMessage,
+    };
+    if (pilotFeedbackContext.trim()) {
+      feedback.context = pilotFeedbackContext.trim();
+    }
+    const response = await fetch(`${apiBaseUrl}/api/pilot-feedback`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(feedback),
+    });
+
+    if (response.ok) {
+      const submitted = (await response.json()) as PilotFeedback;
+      setSubmittedPilotFeedback(submitted);
+      setPilotFeedbackMessage("");
+      return;
+    }
+
+    const error = (await response.json()) as { detail?: unknown };
+    setPilotFeedbackError(
+      typeof error.detail === "string"
+        ? error.detail
+        : "Pilotfeedback konnte nicht gespeichert werden",
+    );
+  }
+
+  async function markPilotFeedbackRolloutRelevant(feedbackId: string) {
+    if (session.kind !== "authenticated") {
+      return;
+    }
+
+    setAdminPilotFeedbackError("");
+    const update: PilotFeedbackUpdate = {
+      status: "resolved",
+      rollout_relevance: "blocks_public_rollout",
+      admin_note: adminPilotFeedbackNotes[feedbackId]?.trim() || null,
+    };
+    const response = await fetch(
+      `${apiBaseUrl}/api/admin/pilot-feedback/${feedbackId}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(update),
+      },
+    );
+
+    if (response.ok) {
+      const updated = (await response.json()) as PilotFeedback;
+      setAdminPilotFeedback((current) =>
+        current.map((feedback) =>
+          feedback.id === updated.id ? updated : feedback,
+        ),
+      );
+      setAdminPilotFeedbackNotes((current) => ({
+        ...current,
+        [feedbackId]: updated.admin_note ?? "",
+      }));
+      return;
+    }
+
+    const error = (await response.json()) as { detail?: unknown };
+    setAdminPilotFeedbackError(
+      typeof error.detail === "string"
+        ? error.detail
+        : "Pilotfeedback konnte nicht markiert werden",
     );
   }
 
@@ -1357,13 +1694,15 @@ export function App() {
     );
   }
 
-  async function submitConsentEvidence(event: FormEvent<HTMLFormElement>) {
+  async function submitConsentEvidence(
+    event: FormEvent<HTMLFormElement>,
+    currentDocument: CurrentDocument,
+  ) {
     event.preventDefault();
 
     if (
       session.kind !== "authenticated" ||
-      currentDocument === null ||
-      !consentChecked
+      !consentCheckedByDocumentId[currentDocument.id]
     ) {
       return;
     }
@@ -1383,7 +1722,10 @@ export function App() {
     });
 
     if (response.ok) {
-      setConsentSaved(true);
+      setConsentSavedByDocumentId((previous) => ({
+        ...previous,
+        [currentDocument.id]: true,
+      }));
       await loadConsentHistory(session.token);
     }
   }
@@ -1524,6 +1866,10 @@ export function App() {
     emailVerification?.email_verified === true &&
     identityCheckpoint?.required_level === "account_setup" &&
     identityCheckpoint.current_level === "email_verified";
+  const canUseDevEmailVerification =
+    showDevelopmentUi &&
+    selfServiceOnboarding?.dev_email_verification_token !== null &&
+    selfServiceOnboarding?.dev_email_verification_token !== undefined;
 
   const documentVersionForm = (
     <form
@@ -1531,6 +1877,17 @@ export function App() {
       onSubmit={publishDocumentVersion}
     >
       <h3>Dokumentverwaltung</h3>
+      <label>
+        Dokumenttyp
+        <select
+          value={documentKey}
+          onChange={(event) => setDocumentKey(event.target.value)}
+        >
+          <option value="privacy_notice">Datenschutzhinweis</option>
+          <option value="portal_terms">Portal-Nutzungsbedingungen</option>
+          <option value="leg_contract">LEG-Vertrag</option>
+        </select>
+      </label>
       <label>
         Titel
         <input
@@ -1791,28 +2148,52 @@ export function App() {
     </section>
   );
 
-  const documentConsentForm = currentDocument ? (
-    <form className="document-consent" onSubmit={submitConsentEvidence}>
-      <h3>{currentDocument.title}</h3>
-      <p>Version {currentDocument.version}</p>
-      <p>{currentDocument.content}</p>
-      <p>{currentDocument.document_hash}</p>
-      <label>
-        <input
-          type="checkbox"
-          checked={consentChecked}
-          onChange={(event) => setConsentChecked(event.target.checked)}
-        />
-        Ich stimme dieser Dokumentversion zu
-      </label>
-      <button type="submit" disabled={!consentChecked}>
-        Zustimmen
-      </button>
-      {consentSaved ? (
-        <div className="invitation-result" role="status">
-          <p>Einwilligung gespeichert</p>
-        </div>
-      ) : null}
+  const acceptedDocumentVersionIds = new Set(
+    consentHistory.map((evidence) => evidence.document_version_id),
+  );
+  const documentConsentForm = currentDocuments.length > 0 ? (
+    <section className="document-consent-list" aria-label="Pflichtdokumente">
+      {currentDocuments.map((currentDocument) => {
+        const consentChecked =
+          consentCheckedByDocumentId[currentDocument.id] ?? false;
+        const consentSaved =
+          consentSavedByDocumentId[currentDocument.id] ||
+          acceptedDocumentVersionIds.has(currentDocument.id);
+
+        return (
+          <form
+            key={currentDocument.id}
+            className="document-consent"
+            onSubmit={(event) => submitConsentEvidence(event, currentDocument)}
+          >
+            <h3>{currentDocument.title}</h3>
+            <p>Version {currentDocument.version}</p>
+            <p>{currentDocument.content}</p>
+            <p>{currentDocument.document_hash}</p>
+            <label>
+              <input
+                type="checkbox"
+                checked={consentChecked}
+                onChange={(event) =>
+                  setConsentCheckedByDocumentId((previous) => ({
+                    ...previous,
+                    [currentDocument.id]: event.target.checked,
+                  }))
+                }
+              />
+              Ich stimme dieser Dokumentversion zu
+            </label>
+            <button type="submit" disabled={!consentChecked || consentSaved}>
+              Zustimmen
+            </button>
+            {consentSaved ? (
+              <div className="invitation-result" role="status">
+                <p>Einwilligung gespeichert</p>
+              </div>
+            ) : null}
+          </form>
+        );
+      })}
       {consentHistory.length > 0 ? (
         <section className="consent-history" aria-label="Einwilligungshistorie">
           <h3>Einwilligungshistorie</h3>
@@ -1824,7 +2205,7 @@ export function App() {
           ))}
         </section>
       ) : null}
-    </form>
+    </section>
   ) : null;
 
   const contactChannelEmail =
@@ -1879,6 +2260,104 @@ export function App() {
           </div>
         ) : null}
       </form>
+    </section>
+  );
+
+  const pilotFeedbackForm = (
+    <section className="pilot-feedback" aria-label="Pilotfeedback-Formular">
+      <form className="invitation-form" onSubmit={submitPilotFeedback}>
+        <h3>Pilotfeedback</h3>
+        <label>
+          Feedback-Kategorie
+          <input
+            type="text"
+            value={pilotFeedbackCategory}
+            onChange={(event) => setPilotFeedbackCategory(event.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Feedback-Kontext
+          <input
+            type="text"
+            value={pilotFeedbackContext}
+            onChange={(event) => setPilotFeedbackContext(event.target.value)}
+          />
+        </label>
+        <label>
+          Pilotfeedback
+          <textarea
+            value={pilotFeedbackMessage}
+            onChange={(event) => setPilotFeedbackMessage(event.target.value)}
+            required
+          />
+        </label>
+        <button type="submit">Pilotfeedback senden</button>
+        {submittedPilotFeedback ? (
+          <div className="invitation-result" role="status">
+            <p>Pilotfeedback gespeichert</p>
+            <p>{submittedPilotFeedback.category}</p>
+          </div>
+        ) : null}
+        {pilotFeedbackError ? (
+          <div className="mutation-error" role="alert">
+            <p>{pilotFeedbackError}</p>
+          </div>
+        ) : null}
+      </form>
+    </section>
+  );
+
+  const adminPilotFeedbackPanel = (
+    <section className="admin-mutation-inbox" aria-label="Pilotfeedback">
+      <h3>Pilotfeedback</h3>
+      {adminPilotFeedback.length > 0 ? (
+        <div className="admin-mutation-list">
+          {adminPilotFeedback.map((feedback) => (
+            <article className="admin-mutation-item" key={feedback.id}>
+              <p>{feedback.category}</p>
+              <p>{feedback.message}</p>
+              {feedback.context ? <p>{feedback.context}</p> : null}
+              <p>{feedback.user_email}</p>
+              <p>{feedback.status}</p>
+              {feedback.rollout_relevance ? (
+                <p>{feedback.rollout_relevance}</p>
+              ) : null}
+              {feedback.admin_note ? <p>{feedback.admin_note}</p> : null}
+              <label>
+                Bearbeitungsnotiz
+                <input
+                  type="text"
+                  value={
+                    adminPilotFeedbackNotes[feedback.id] ??
+                    feedback.admin_note ??
+                    ""
+                  }
+                  onChange={(event) =>
+                    setAdminPilotFeedbackNotes((current) => ({
+                      ...current,
+                      [feedback.id]: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void markPilotFeedbackRolloutRelevant(feedback.id)}
+              >
+                Rolloutrelevant erledigen
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p>Kein Pilotfeedback offen</p>
+      )}
+      {adminPilotFeedbackError ? (
+        <div className="mutation-error" role="alert">
+          <p>{adminPilotFeedbackError}</p>
+        </div>
+      ) : null}
     </section>
   );
 
@@ -2551,6 +3030,29 @@ export function App() {
     </section>
   );
 
+  const totpMfaEnrollmentPanel =
+    session.kind === "authenticated" && adminMfaRequired(session.user) ? (
+      <section className="invitation-form" aria-label="TOTP-MFA einrichten">
+        <h3>TOTP-MFA einrichten</h3>
+        <p>Admin-Zugriff wird nach aktivierter TOTP-MFA freigegeben.</p>
+        <button type="button" onClick={enrollTotpMfa}>
+          TOTP-MFA einrichten
+        </button>
+        {totpEnrollment ? (
+          <div className="invitation-result" role="status">
+            <p>Authenticator Secret</p>
+            <code>{totpEnrollment.secret}</code>
+            <p>{totpEnrollment.otpauth_url}</p>
+          </div>
+        ) : null}
+        {totpEnrollmentError ? (
+          <div className="mutation-error" role="alert">
+            <p>{totpEnrollmentError}</p>
+          </div>
+        ) : null}
+      </section>
+    ) : null;
+
   const statusPanel = (
     <section className="status-panel" aria-label="Systemstatus">
       <span
@@ -2574,6 +3076,107 @@ export function App() {
         ) : null}
       </div>
     </section>
+  );
+
+  const publicPasswordResetToken =
+    routePath === "/reset-password"
+      ? new URLSearchParams(window.location.search).get("token") ?? ""
+      : "";
+  const resetPasswordScreen = (
+    <main className="portal-shell portal-shell--auth">
+      <nav className="portal-nav" aria-label="Portalbereiche">
+        <button type="button" onClick={() => navigate("/")}>
+          SunTerra LEG Portal
+        </button>
+        <button type="button" onClick={() => navigate("/login")}>
+          Einloggen
+        </button>
+      </nav>
+      <section className="auth-panel" aria-labelledby="reset-password-title">
+        <p className="eyebrow">Kontozugang</p>
+        <h1 id="reset-password-title">Passwort zuruecksetzen</h1>
+        {publicPasswordResetToken ? (
+          <form className="invitation-form" onSubmit={confirmPublicPasswordReset}>
+            <p>Reset-Token erkannt</p>
+            <label>
+              Neues Passwort
+              <input
+                type="password"
+                value={publicPasswordResetPassword}
+                onChange={(event) =>
+                  setPublicPasswordResetPassword(event.target.value)
+                }
+                required
+              />
+            </label>
+            <button type="submit">Passwort aktualisieren</button>
+          </form>
+        ) : (
+          <form className="invitation-form" onSubmit={requestPublicPasswordReset}>
+            <label>
+              E-Mail fuer Passwortreset
+              <input
+                type="email"
+                value={publicPasswordResetEmail}
+                onChange={(event) =>
+                  setPublicPasswordResetEmail(event.target.value)
+                }
+                required
+              />
+            </label>
+            <button type="submit">Reset-Link senden</button>
+          </form>
+        )}
+        {publicPasswordResetStatus ? (
+          <div className="invitation-result" role="status">
+            <p>{publicPasswordResetStatus}</p>
+          </div>
+        ) : null}
+        {publicPasswordResetError ? (
+          <div className="mutation-error" role="alert">
+            <p>{publicPasswordResetError}</p>
+          </div>
+        ) : null}
+      </section>
+      {statusPanel}
+    </main>
+  );
+
+  const selfServiceTopologyFields = (
+    <>
+      <label>
+        Messpunkt-ID
+        <input
+          type="text"
+          value={selfServiceMeteringPointId}
+          onChange={(event) => setSelfServiceMeteringPointId(event.target.value)}
+        />
+      </label>
+      <label>
+        Strasse
+        <input
+          type="text"
+          value={selfServiceStreet}
+          onChange={(event) => setSelfServiceStreet(event.target.value)}
+        />
+      </label>
+      <label>
+        PLZ
+        <input
+          type="text"
+          value={selfServicePostalCode}
+          onChange={(event) => setSelfServicePostalCode(event.target.value)}
+        />
+      </label>
+      <label>
+        Ort
+        <input
+          type="text"
+          value={selfServiceCity}
+          onChange={(event) => setSelfServiceCity(event.target.value)}
+        />
+      </label>
+    </>
   );
 
   const loginScreen = (
@@ -2612,6 +3215,15 @@ export function App() {
               required
             />
           </label>
+          <label>
+            TOTP-Code
+            <input
+              type="text"
+              inputMode="numeric"
+              value={loginTotpCode}
+              onChange={(event) => setLoginTotpCode(event.target.value)}
+            />
+          </label>
           <button type="submit">Einloggen</button>
           {loginError ? (
             <div className="mutation-error" role="alert">
@@ -2619,21 +3231,26 @@ export function App() {
             </div>
           ) : null}
         </form>
-        <section className="dev-login-panel" aria-label="Lokale Demo-Rollen">
-          <h2>Anmeldung erforderlich</h2>
-          <p>Fuer die lokale Entwicklung kann eine Demo-Rolle genutzt werden.</p>
-          <div className="role-actions" aria-label="Demo-Rollen">
-            {demoRoles.map((demoRole) => (
-              <button
-                key={demoRole.role}
-                type="button"
-                onClick={() => loginAs(demoRole.role)}
-              >
-                {demoRole.label}
-              </button>
-            ))}
-          </div>
-          {import.meta.env.DEV ? (
+        <button type="button" onClick={() => navigate("/reset-password")}>
+          Passwort vergessen?
+        </button>
+        {showDevelopmentUi ? (
+          <section className="dev-login-panel" aria-label="Lokale Demo-Rollen">
+            <h2>Anmeldung erforderlich</h2>
+            <p>
+              Fuer die lokale Entwicklung kann eine Demo-Rolle genutzt werden.
+            </p>
+            <div className="role-actions" aria-label="Demo-Rollen">
+              {demoRoles.map((demoRole) => (
+                <button
+                  key={demoRole.role}
+                  type="button"
+                  onClick={() => loginAs(demoRole.role)}
+                >
+                  {demoRole.label}
+                </button>
+              ))}
+            </div>
             <form
               className="invitation-form"
               onSubmit={acceptParticipantInvitation}
@@ -2655,8 +3272,8 @@ export function App() {
                 </div>
               ) : null}
             </form>
-          ) : null}
-        </section>
+          </section>
+        ) : null}
       </section>
       {statusPanel}
     </main>
@@ -2693,8 +3310,29 @@ export function App() {
                 required
               />
             </label>
+            <label>
+              Self-Service Anzeigename
+              <input
+                type="text"
+                value={selfServiceDisplayName}
+                onChange={(event) =>
+                  setSelfServiceDisplayName(event.target.value)
+                }
+              />
+            </label>
+            {selfServiceTopologyFields}
             <button type="submit">Self-Service starten</button>
           </form>
+          {selfServiceInterest ? (
+            <section
+              className="identity-checkpoint"
+              aria-label="Interessensmeldung"
+            >
+              <h3>Interessensmeldung gespeichert</h3>
+              <p>{selfServiceInterest.email}</p>
+              <p>{selfServiceInterest.display_name}</p>
+            </section>
+          ) : null}
           {selfServiceOnboarding && identityCheckpoint ? (
             <section
               className="identity-checkpoint"
@@ -2708,14 +3346,18 @@ export function App() {
                   ? "Checkpoint erfuellt"
                   : "Checkpoint offen"}
               </p>
-              <p>{selfServiceOnboarding.dev_email_verification_token}</p>
-              <button
-                type="button"
-                disabled={identityCheckpoint.satisfied}
-                onClick={() => void verifySelfServiceEmail()}
-              >
-                Dev E-Mail verifizieren
-              </button>
+              {canUseDevEmailVerification ? (
+                <>
+                  <p>{selfServiceOnboarding.dev_email_verification_token}</p>
+                  <button
+                    type="button"
+                    disabled={identityCheckpoint.satisfied}
+                    onClick={() => void verifySelfServiceEmail()}
+                  >
+                    Dev E-Mail verifizieren
+                  </button>
+                </>
+              ) : null}
             </section>
           ) : null}
           {canSetupSelfServiceAccount ? (
@@ -2759,6 +3401,10 @@ export function App() {
     return loginScreen;
   }
 
+  if (routePath === "/reset-password") {
+    return resetPasswordScreen;
+  }
+
   if (routePath === "/app") {
     if (session.kind !== "authenticated") {
       return loginScreen;
@@ -2794,14 +3440,22 @@ export function App() {
                 </div>
                 <div>
                   <dt>Status</dt>
-                  <dd>Mitgliedschaft aktiv</dd>
+                  <dd>
+                    {membershipStatusLabel(
+                      participantMembership.membership_status,
+                    )}
+                  </dd>
                 </div>
               </dl>
+              {participantMembership.eligibility_review_reason ? (
+                <p>{participantMembership.eligibility_review_reason}</p>
+              ) : null}
               <p className="billing-notice">
                 {participantMembership.billing_notice}
               </p>
               {documentConsentForm}
               {contactChannelForm}
+              {pilotFeedbackForm}
               {addressMutationForm}
             </div>
           ) : activeWorkspace ? (
@@ -2813,63 +3467,73 @@ export function App() {
                   <p>{session.user.display_name}</p>
                 </div>
               </header>
-              {session.user.role === "leg_admin" ? (
+              {adminMfaRequired(session.user) ? (
+                totpMfaEnrollmentPanel
+              ) : (
                 <>
-                  <form
-                    className="invitation-form"
-                    onSubmit={createParticipantInvitation}
-                  >
-                    <h3>Teilnehmer einladen</h3>
-                    <label>
-                      E-Mail
-                      <input
-                        type="email"
-                        value={inviteEmail}
-                        onChange={(event) => setInviteEmail(event.target.value)}
-                        required
-                      />
-                    </label>
-                    <label>
-                      Anzeigename
-                      <input
-                        type="text"
-                        value={inviteDisplayName}
-                        onChange={(event) =>
-                          setInviteDisplayName(event.target.value)
-                        }
-                        required
-                      />
-                    </label>
-                    <button type="submit">Einladung erstellen</button>
-                    {participantInvitation ? (
-                      <div className="invitation-result" role="status">
-                        <p>Einladung erstellt</p>
-                        <p>{participantInvitation.display_name}</p>
-                        <p>{participantInvitation.token}</p>
-                      </div>
-                    ) : null}
-                  </form>
-                  {partnerAdminUserForm}
-                  {documentVersionForm}
-                  {adminMutationInbox}
-                  {adminMutationPackages}
+                  {session.user.role === "leg_admin" ? (
+                    <>
+                      <form
+                        className="invitation-form"
+                        onSubmit={createParticipantInvitation}
+                      >
+                        <h3>Teilnehmer einladen</h3>
+                        <label>
+                          E-Mail
+                          <input
+                            type="email"
+                            value={inviteEmail}
+                            onChange={(event) =>
+                              setInviteEmail(event.target.value)
+                            }
+                            required
+                          />
+                        </label>
+                        <label>
+                          Anzeigename
+                          <input
+                            type="text"
+                            value={inviteDisplayName}
+                            onChange={(event) =>
+                              setInviteDisplayName(event.target.value)
+                            }
+                            required
+                          />
+                        </label>
+                        <button type="submit">Einladung erstellen</button>
+                        {participantInvitation ? (
+                          <div className="invitation-result" role="status">
+                            <p>Einladung erstellt</p>
+                            <p>{participantInvitation.display_name}</p>
+                            <p>{participantInvitation.token}</p>
+                          </div>
+                        ) : null}
+                      </form>
+                      {partnerAdminUserForm}
+                      {documentVersionForm}
+                      {adminPilotFeedbackPanel}
+                      {adminMutationInbox}
+                      {adminMutationPackages}
+                    </>
+                  ) : null}
+                  {session.user.role === "partner_admin" ? (
+                    <>
+                      {partnerTasksView}
+                      {partnerMemberRegisterView}
+                      {partnerPackageInbox}
+                    </>
+                  ) : null}
+                  {session.user.role === "platform_admin" ? userManagementPanel : null}
+                  {session.user.role === "participant" ? (
+                    <>
+                      {documentConsentForm}
+                      {contactChannelForm}
+                      {pilotFeedbackForm}
+                      {addressMutationForm}
+                    </>
+                  ) : null}
                 </>
-              ) : null}
-              {session.user.role === "partner_admin" ? (
-                <>
-                  {partnerTasksView}
-                  {partnerMemberRegisterView}
-                  {partnerPackageInbox}
-                </>
-              ) : null}
-              {session.user.role === "platform_admin" ? userManagementPanel : null}
-              {session.user.role === "participant" ? (
-                <>
-                  {documentConsentForm}
-                  {contactChannelForm}
-                  {addressMutationForm}
-                </>
-              ) : null}
+              )}
             </div>
           ) : null}
         </section>
@@ -2993,6 +3657,7 @@ export function App() {
             ) : null}
             {documentConsentForm}
             {contactChannelForm}
+            {pilotFeedbackForm}
             {addressMutationForm}
           </div>
         ) : session.kind === "authenticated" && activeWorkspace ? (
@@ -3094,12 +3759,15 @@ export function App() {
               <>
                 {documentConsentForm}
                 {contactChannelForm}
+                {pilotFeedbackForm}
                 {addressMutationForm}
               </>
             ) : null}
           </div>
         ) : (
           <>
+            {showDevelopmentUi ? (
+              <>
             <div>
               <h2>Anmeldung erforderlich</h2>
               <p>Wähle für die lokale Entwicklung eine Demo-Rolle.</p>
@@ -3115,6 +3783,12 @@ export function App() {
                 </button>
               ))}
             </div>
+              </>
+            ) : (
+              <div>
+                <h2>Anmeldung erforderlich</h2>
+              </div>
+            )}
             <form
               className="invitation-form self-service-form"
               onSubmit={startSelfServiceOnboarding}
@@ -3139,6 +3813,7 @@ export function App() {
                   required
                 />
               </label>
+              {selfServiceTopologyFields}
               <button type="submit">Self-Service starten</button>
             </form>
             {selfServiceOnboarding && identityCheckpoint ? (
@@ -3154,14 +3829,18 @@ export function App() {
                     ? "Checkpoint erfüllt"
                     : "Checkpoint offen"}
                 </p>
-                <p>{selfServiceOnboarding.dev_email_verification_token}</p>
-                <button
-                  type="button"
-                  disabled={identityCheckpoint.satisfied}
-                  onClick={() => void verifySelfServiceEmail()}
-                >
-                  Dev E-Mail verifizieren
-                </button>
+                {canUseDevEmailVerification ? (
+                  <>
+                    <p>{selfServiceOnboarding.dev_email_verification_token}</p>
+                    <button
+                      type="button"
+                      disabled={identityCheckpoint.satisfied}
+                      onClick={() => void verifySelfServiceEmail()}
+                    >
+                      Dev E-Mail verifizieren
+                    </button>
+                  </>
+                ) : null}
               </section>
             ) : null}
             <form

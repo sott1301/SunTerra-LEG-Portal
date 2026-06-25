@@ -1,11 +1,26 @@
 import base64
+from datetime import UTC, datetime
+import hmac
 import json
+from hashlib import sha1
+import struct
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-from sunterra_leg_portal.main import app
+from sunterra_leg_portal.auth import CurrentUser, Role, create_access_token
+from sunterra_leg_portal.main import USER_ACCOUNTS, UserAccountRecord, app
+
+
+def totp_code(secret: str, timestamp: datetime | None = None) -> str:
+    now = timestamp or datetime.now(UTC)
+    counter = int(now.timestamp()) // 30
+    key = base64.b32decode(secret, casefold=True)
+    digest = hmac.new(key, struct.pack(">Q", counter), sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return f"{value % 1_000_000:06d}"
 
 
 def test_login_issues_jwt_and_me_resolves_user() -> None:
@@ -159,6 +174,128 @@ def test_email_first_self_service_and_verified_account_setup() -> None:
     )
     assert login.status_code == 200
     assert login.json()["user"]["role"] == "participant"
+
+
+def test_admin_totp_enrollment_requires_challenge_on_next_login() -> None:
+    client = TestClient(app)
+    platform = client.post(
+        "/api/auth/login",
+        json={"email": "platform-admin@example.test", "password": "SunTerra123!"},
+    ).json()["access_token"]
+    email = f"totp-leg-admin-{uuid4().hex}@example.test"
+    created = client.post(
+        "/api/admin/users",
+        headers={"Authorization": f"Bearer {platform}"},
+        json={
+            "email": email,
+            "display_name": "TOTP LEG Admin",
+            "role": "leg_admin",
+            "password": "Start123!",
+        },
+    )
+    assert created.status_code == 201
+
+    login_before_enrollment = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": "Start123!"},
+    )
+    assert login_before_enrollment.status_code == 200
+
+    enrollment = client.post(
+        "/api/auth/mfa/totp/enroll",
+        headers={
+            "Authorization": f"Bearer {login_before_enrollment.json()['access_token']}",
+        },
+    )
+
+    assert enrollment.status_code == 201
+    secret = enrollment.json()["secret"]
+    assert enrollment.json()["otpauth_url"].startswith("otpauth://totp/SunTerra%20LEG:")
+
+    missing_challenge = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": "Start123!"},
+    )
+    failed_challenge = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": "Start123!", "totp_code": "000000"},
+    )
+    challenged_login = client.post(
+        "/api/auth/login",
+        json={
+            "email": email,
+            "password": "Start123!",
+            "totp_code": totp_code(secret),
+        },
+    )
+    participant_login = client.post(
+        "/api/auth/login",
+        json={"email": "participant@example.test", "password": "SunTerra123!"},
+    )
+
+    assert missing_challenge.status_code == 401
+    assert missing_challenge.json() == {"detail": "Valid TOTP code required"}
+    assert failed_challenge.status_code == 401
+    assert challenged_login.status_code == 200
+    assert challenged_login.json()["user"]["role"] == "leg_admin"
+    assert participant_login.status_code == 200
+    assert participant_login.json()["user"]["role"] == "participant"
+
+
+def test_admin_routes_require_mfa_satisfied_session() -> None:
+    client = TestClient(app)
+    platform = client.post(
+        "/api/auth/login",
+        json={"email": "platform-admin@example.test", "password": "SunTerra123!"},
+    ).json()["access_token"]
+    email = f"totp-gated-admin-{uuid4().hex}@example.test"
+    created = client.post(
+        "/api/admin/users",
+        headers={"Authorization": f"Bearer {platform}"},
+        json={
+            "email": email,
+            "display_name": "TOTP Gated Admin",
+            "role": "leg_admin",
+            "password": "Start123!",
+        },
+    )
+    assert created.status_code == 201
+
+    password_login = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": "Start123!"},
+    )
+    password_only_token = password_login.json()["access_token"]
+    users_before_mfa = client.get(
+        "/api/admin/participants",
+        headers={"Authorization": f"Bearer {password_only_token}"},
+    )
+    enrollment = client.post(
+        "/api/auth/mfa/totp/enroll",
+        headers={"Authorization": f"Bearer {password_only_token}"},
+    )
+    secret = enrollment.json()["secret"]
+    mfa_login = client.post(
+        "/api/auth/login",
+        json={
+            "email": email,
+            "password": "Start123!",
+            "totp_code": totp_code(secret),
+        },
+    )
+    users_after_mfa = client.get(
+        "/api/admin/participants",
+        headers={"Authorization": f"Bearer {mfa_login.json()['access_token']}"},
+    )
+
+    assert password_login.status_code == 200
+    assert password_login.json()["user"]["mfa_satisfied"] is False
+    assert users_before_mfa.status_code == 403
+    assert users_before_mfa.json() == {"detail": "Admin MFA required"}
+    assert enrollment.status_code == 201
+    assert mfa_login.status_code == 200
+    assert mfa_login.json()["user"]["mfa_satisfied"] is True
+    assert users_after_mfa.status_code == 200
 
 
 def test_platform_admin_manages_user_accounts_but_not_partner_creation() -> None:
@@ -408,3 +545,315 @@ def test_leg_admin_creates_partner_admin_and_publishes_documents() -> None:
     )
     assert readable.status_code == 200
     assert any(document["version"] == "2026-06" for document in readable.json())
+
+
+def test_password_reset_request_sends_email_and_confirm_changes_password(
+    monkeypatch,
+) -> None:
+    sent_messages = []
+
+    class FakeSmtp:
+        def __init__(self, host, port, timeout):
+            assert host == "smtp.example.test"
+            assert port == 587
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def send_message(self, message):
+            sent_messages.append(message)
+            return None
+
+    client = TestClient(app)
+    started = client.post(
+        "/api/auth/self-service-onboarding-requests",
+        json={"email": "reset.participant@example.test"},
+    ).json()
+    verified = client.post(
+        f"/api/auth/email-verifications/{started['dev_email_verification_token']}/verify",
+    )
+    setup = client.post(
+        "/api/auth/participant-account-setup",
+        headers={"Authorization": f"Bearer {started['access_token']}"},
+        json={"display_name": "Reset Participant", "password": "OldReset123!"},
+    )
+    assert verified.status_code == 200
+    assert setup.status_code == 200
+
+    monkeypatch.setenv("SUNTERRA_ENV", "production")
+    monkeypatch.setenv("SUNTERRA_SECRET_KEY", "password-reset-secret")
+    monkeypatch.setenv("SUNTERRA_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SUNTERRA_SMTP_PORT", "587")
+    monkeypatch.setenv("SUNTERRA_SMTP_FROM_EMAIL", "noreply@portal.example.test")
+    monkeypatch.setenv("SUNTERRA_PUBLIC_BASE_URL", "https://portal.example.test")
+    monkeypatch.setattr("smtplib.SMTP", FakeSmtp)
+
+    known = client.post(
+        "/api/auth/password-reset/request",
+        json={"email": "reset.participant@example.test"},
+    )
+    unknown = client.post(
+        "/api/auth/password-reset/request",
+        json={"email": "unknown.reset@example.test"},
+    )
+
+    assert known.status_code == 202
+    assert unknown.status_code == 202
+    assert known.json() == unknown.json() == {"status": "password_reset_requested"}
+    assert len(sent_messages) == 1
+    assert sent_messages[0]["To"] == "reset.participant@example.test"
+    assert sent_messages[0]["Subject"] == "SunTerra LEG Passwort zuruecksetzen"
+    marker = "https://portal.example.test/reset-password?token="
+    body = sent_messages[0].get_content()
+    assert marker in body
+    token = body.split(marker, maxsplit=1)[1].strip()
+
+    confirmed = client.post(
+        "/api/auth/password-reset/confirm",
+        json={"token": token, "password": "NewReset123!"},
+    )
+    old_login = client.post(
+        "/api/auth/login",
+        json={"email": "reset.participant@example.test", "password": "OldReset123!"},
+    )
+    new_login = client.post(
+        "/api/auth/login",
+        json={"email": "reset.participant@example.test", "password": "NewReset123!"},
+    )
+    reused = client.post(
+        "/api/auth/password-reset/confirm",
+        json={"token": token, "password": "AnotherReset123!"},
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json() == {"status": "password_reset_completed"}
+    assert old_login.status_code == 401
+    assert new_login.status_code == 200
+    assert reused.status_code == 400
+
+
+def test_password_reset_expired_token_is_rejected(monkeypatch) -> None:
+    sent_messages = []
+
+    class FakeSmtp:
+        def __init__(self, host, port, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def send_message(self, message):
+            sent_messages.append(message)
+
+    client = TestClient(app)
+    started = client.post(
+        "/api/auth/self-service-onboarding-requests",
+        json={"email": "reset.expired@example.test"},
+    ).json()
+    client.post(
+        f"/api/auth/email-verifications/{started['dev_email_verification_token']}/verify",
+    )
+    setup = client.post(
+        "/api/auth/participant-account-setup",
+        headers={"Authorization": f"Bearer {started['access_token']}"},
+        json={"display_name": "Reset Expired", "password": "OldReset123!"},
+    )
+    assert setup.status_code == 200
+
+    monkeypatch.setenv("SUNTERRA_ENV", "production")
+    monkeypatch.setenv("SUNTERRA_SECRET_KEY", "password-reset-secret")
+    monkeypatch.setenv("SUNTERRA_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SUNTERRA_SMTP_PORT", "587")
+    monkeypatch.setenv("SUNTERRA_SMTP_FROM_EMAIL", "noreply@portal.example.test")
+    monkeypatch.setenv("SUNTERRA_PUBLIC_BASE_URL", "https://portal.example.test")
+    monkeypatch.setattr("smtplib.SMTP", FakeSmtp)
+    monkeypatch.setattr(
+        "sunterra_leg_portal.main.PASSWORD_RESET_TOKEN_TTL_SECONDS",
+        -1,
+    )
+
+    requested = client.post(
+        "/api/auth/password-reset/request",
+        json={"email": "reset.expired@example.test"},
+    )
+    marker = "https://portal.example.test/reset-password?token="
+    token = sent_messages[0].get_content().split(marker, maxsplit=1)[1].strip()
+    confirmed = client.post(
+        "/api/auth/password-reset/confirm",
+        json={"token": token, "password": "NewReset123!"},
+    )
+
+    assert requested.status_code == 202
+    assert confirmed.status_code == 400
+    assert confirmed.json() == {"detail": "Invalid password reset token"}
+
+
+def test_password_reset_does_not_bypass_admin_totp_mfa(monkeypatch) -> None:
+    sent_messages = []
+
+    class FakeSmtp:
+        def __init__(self, host, port, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def send_message(self, message):
+            sent_messages.append(message)
+
+    client = TestClient(app)
+    platform = client.post(
+        "/api/auth/login",
+        json={"email": "platform-admin@example.test", "password": "SunTerra123!"},
+    ).json()["access_token"]
+    email = f"reset-totp-admin-{uuid4().hex}@example.test"
+    created = client.post(
+        "/api/admin/users",
+        headers={"Authorization": f"Bearer {platform}"},
+        json={
+            "email": email,
+            "display_name": "Reset TOTP Admin",
+            "role": "leg_admin",
+            "password": "OldReset123!",
+        },
+    )
+    password_login = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": "OldReset123!"},
+    )
+    enrollment = client.post(
+        "/api/auth/mfa/totp/enroll",
+        headers={"Authorization": f"Bearer {password_login.json()['access_token']}"},
+    )
+    secret = enrollment.json()["secret"]
+
+    monkeypatch.setenv("SUNTERRA_ENV", "production")
+    monkeypatch.setenv("SUNTERRA_SECRET_KEY", "password-reset-secret")
+    monkeypatch.setenv("SUNTERRA_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SUNTERRA_SMTP_PORT", "587")
+    monkeypatch.setenv("SUNTERRA_SMTP_FROM_EMAIL", "noreply@portal.example.test")
+    monkeypatch.setenv("SUNTERRA_PUBLIC_BASE_URL", "https://portal.example.test")
+    monkeypatch.setattr("smtplib.SMTP", FakeSmtp)
+
+    requested = client.post(
+        "/api/auth/password-reset/request",
+        json={"email": email},
+    )
+    marker = "https://portal.example.test/reset-password?token="
+    token = sent_messages[0].get_content().split(marker, maxsplit=1)[1].strip()
+    confirmed = client.post(
+        "/api/auth/password-reset/confirm",
+        json={"token": token, "password": "NewReset123!"},
+    )
+    password_only_login = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": "NewReset123!"},
+    )
+    mfa_login = client.post(
+        "/api/auth/login",
+        json={
+            "email": email,
+            "password": "NewReset123!",
+            "totp_code": totp_code(secret),
+        },
+    )
+
+    assert created.status_code == 201
+    assert enrollment.status_code == 201
+    assert requested.status_code == 202
+    assert confirmed.status_code == 200
+    assert password_only_login.status_code == 401
+    assert password_only_login.json() == {"detail": "Valid TOTP code required"}
+    assert mfa_login.status_code == 200
+    assert mfa_login.json()["user"]["mfa_satisfied"] is True
+
+
+def test_password_reset_request_hides_smtp_failure_from_account_enumeration(
+    monkeypatch,
+) -> None:
+    class FailingSmtp:
+        def __init__(self, host, port, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def send_message(self, message):
+            raise OSError("smtp unavailable")
+
+    client = TestClient(app)
+    started = client.post(
+        "/api/auth/self-service-onboarding-requests",
+        json={"email": "reset.smtp.failure@example.test"},
+    ).json()
+    client.post(
+        f"/api/auth/email-verifications/{started['dev_email_verification_token']}/verify",
+    )
+    setup = client.post(
+        "/api/auth/participant-account-setup",
+        headers={"Authorization": f"Bearer {started['access_token']}"},
+        json={"display_name": "Reset SMTP Failure", "password": "OldReset123!"},
+    )
+    assert setup.status_code == 200
+
+    monkeypatch.setenv("SUNTERRA_ENV", "production")
+    monkeypatch.setenv("SUNTERRA_SECRET_KEY", "password-reset-secret")
+    monkeypatch.setenv("SUNTERRA_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SUNTERRA_SMTP_PORT", "587")
+    monkeypatch.setenv("SUNTERRA_SMTP_FROM_EMAIL", "noreply@portal.example.test")
+    monkeypatch.setenv("SUNTERRA_PUBLIC_BASE_URL", "https://portal.example.test")
+    monkeypatch.setattr("smtplib.SMTP", FailingSmtp)
+
+    known = client.post(
+        "/api/auth/password-reset/request",
+        json={"email": "reset.smtp.failure@example.test"},
+    )
+    unknown = client.post(
+        "/api/auth/password-reset/request",
+        json={"email": "unknown.smtp.failure@example.test"},
+    )
+
+    assert known.status_code == 202
+    assert unknown.status_code == 202
+    assert known.json() == unknown.json() == {"status": "password_reset_requested"}
+
+    USER_ACCOUNTS["smtp-failure-admin"] = UserAccountRecord(
+        id="smtp-failure-admin",
+        email="smtp-failure-admin@example.test",
+        display_name="SMTP Failure Admin",
+        role=Role.LEG_ADMIN,
+        active=True,
+    )
+    admin_token = create_access_token(
+        CurrentUser(
+            id="smtp-failure-admin",
+            email="smtp-failure-admin@example.test",
+            display_name="SMTP Failure Admin",
+            role=Role.LEG_ADMIN,
+            mfa_satisfied=True,
+        ),
+    )
+    events = client.get(
+        "/api/admin/communication-events",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert events.status_code == 200
+    assert any(
+        event["recipient_email"] == "reset.smtp.failure@example.test"
+        and event["event_type"] == "password_reset"
+        and event["status"] == "failed"
+        for event in events.json()
+    )

@@ -19,9 +19,9 @@ def verified_participant_token(client: TestClient, email: str) -> str:
 
 def approve_mutation_request(client: TestClient, mutation_request_id: str) -> None:
     response = client.post(
-        f"/api/admin/mutation-requests/{mutation_request_id}/review-decision",
+        f"/api/admin/mutation-requests/{mutation_request_id}/package-readiness",
         headers={"Authorization": "Bearer dev:leg_admin"},
-        json={"decision": "approved"},
+        json={"ready": True, "reason": "Paketbereit-Check bestanden."},
     )
 
     assert response.status_code == 200
@@ -265,6 +265,199 @@ def test_regular_entry_mutation_requires_reason() -> None:
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Entry mutation requires reason"}
+
+
+def test_non_entry_mutation_requires_package_ready_check_before_packaging() -> None:
+    client = TestClient(app)
+    participant_token = verified_participant_token(
+        client,
+        "regular-package-ready@example.test",
+    )
+    submitted = client.post(
+        "/api/participants/me/mutation-requests",
+        headers={"Authorization": f"Bearer {participant_token}"},
+        json={
+            "mutation_type": "role",
+            "mode": "regular",
+            "requested_quarter": "2031-Q1",
+            "submitted_on": "2030-12-31",
+            "requested_role": "producer",
+        },
+    ).json()
+    entry = client.post(
+        "/api/participants/me/mutation-requests",
+        headers={"Authorization": f"Bearer {participant_token}"},
+        json={
+            "mutation_type": "entry",
+            "mode": "regular",
+            "requested_quarter": "2031-Q1",
+            "submitted_on": "2030-12-31",
+            "reason": "Neue Teilnahme.",
+        },
+    ).json()
+
+    package_before_check = client.post(
+        "/api/admin/mutation-packages",
+        headers={"Authorization": "Bearer dev:leg_admin"},
+        json={"quarter": "2031-Q1"},
+    )
+    entry_ready = client.post(
+        f"/api/admin/mutation-requests/{entry['id']}/package-readiness",
+        headers={"Authorization": "Bearer dev:leg_admin"},
+        json={"ready": True, "reason": "Eintritt braucht LEG-Freigabe."},
+    )
+    package_ready = client.post(
+        f"/api/admin/mutation-requests/{submitted['id']}/package-readiness",
+        headers={"Authorization": "Bearer dev:leg_admin"},
+        json={"ready": True, "reason": "Paketbereit-Check bestanden."},
+    )
+    package = client.post(
+        "/api/admin/mutation-packages",
+        headers={"Authorization": "Bearer dev:leg_admin"},
+        json={"quarter": "2031-Q1"},
+    )
+
+    assert submitted["status"] == "submitted"
+    assert entry["status"] == "submitted"
+    assert package_before_check.status_code == 400
+    assert package_before_check.json() == {
+        "detail": "No package-ready un-packaged mutation requests for quarter",
+    }
+    assert entry_ready.status_code == 400
+    assert entry_ready.json() == {
+        "detail": "Entry mutations require LEG approval before package readiness",
+    }
+    assert package_ready.status_code == 200
+    assert package_ready.json()["status"] == "package_ready"
+    assert package_ready.json()["review_reason"] == "Paketbereit-Check bestanden."
+    assert package.status_code == 201
+    assert [record["mutation_request_id"] for record in package.json()["records"]] == [
+        submitted["id"],
+    ]
+
+
+def test_non_entry_package_readiness_can_request_clarification_or_stop_invalid() -> None:
+    client = TestClient(app)
+    participant_token = verified_participant_token(
+        client,
+        "regular-package-readiness-stop@example.test",
+    )
+    incomplete = client.post(
+        "/api/participants/me/mutation-requests",
+        headers={"Authorization": f"Bearer {participant_token}"},
+        json={
+            "mutation_type": "role",
+            "mode": "regular",
+            "requested_quarter": "2031-Q3",
+            "submitted_on": "2031-06-30",
+            "requested_role": "producer",
+        },
+    ).json()
+    erroneous = client.post(
+        "/api/participants/me/mutation-requests",
+        headers={"Authorization": f"Bearer {participant_token}"},
+        json={
+            "mutation_type": "meter_point",
+            "mode": "regular",
+            "requested_quarter": "2031-Q3",
+            "submitted_on": "2031-06-30",
+            "metering_code": "CH-1008901234500000000000000000999",
+        },
+    ).json()
+
+    clarification = client.post(
+        f"/api/admin/mutation-requests/{incomplete['id']}/package-readiness",
+        headers={"Authorization": "Bearer dev:leg_admin"},
+        json={
+            "ready": False,
+            "status": "needs_clarification",
+            "reason": "Vollmacht fehlt.",
+        },
+    )
+    stopped = client.post(
+        f"/api/admin/mutation-requests/{erroneous['id']}/package-readiness",
+        headers={"Authorization": "Bearer dev:leg_admin"},
+        json={
+            "ready": False,
+            "status": "stopped_invalid",
+            "reason": "Messpunkt gehoert nicht zur Teilnehmeradresse.",
+        },
+    )
+    package = client.post(
+        "/api/admin/mutation-packages",
+        headers={"Authorization": "Bearer dev:leg_admin"},
+        json={"quarter": "2031-Q3"},
+    )
+    participant_history = client.get(
+        "/api/participants/me/mutation-requests",
+        headers={"Authorization": f"Bearer {participant_token}"},
+    )
+
+    assert clarification.status_code == 200
+    assert clarification.json()["status"] == "needs_clarification"
+    assert clarification.json()["review_reason"] == "Vollmacht fehlt."
+    assert stopped.status_code == 200
+    assert stopped.json()["status"] == "stopped_invalid"
+    assert (
+        stopped.json()["review_reason"]
+        == "Messpunkt gehoert nicht zur Teilnehmeradresse."
+    )
+    assert package.status_code == 400
+    assert package.json() == {
+        "detail": "No package-ready un-packaged mutation requests for quarter",
+    }
+    assert participant_history.status_code == 200
+    statuses = {
+        record["id"]: (record["status"], record["review_reason"])
+        for record in participant_history.json()
+    }
+    assert statuses[incomplete["id"]] == ("needs_clarification", "Vollmacht fehlt.")
+    assert statuses[erroneous["id"]] == (
+        "stopped_invalid",
+        "Messpunkt gehoert nicht zur Teilnehmeradresse.",
+    )
+
+
+def test_legacy_approved_non_entry_mutation_is_not_packageable() -> None:
+    client = TestClient(app)
+    participant_token = verified_participant_token(
+        client,
+        "regular-approved-not-packageable@example.test",
+    )
+    submitted = client.post(
+        "/api/participants/me/mutation-requests",
+        headers={"Authorization": f"Bearer {participant_token}"},
+        json={
+            "mutation_type": "address",
+            "mode": "regular",
+            "requested_quarter": "2031-Q2",
+            "submitted_on": "2031-03-31",
+            "new_address": {
+                "street": "Bypassweg 9",
+                "postal_code": "8254",
+                "city": "Basadingen",
+                "country": "CH",
+            },
+        },
+    ).json()
+    reviewed = client.post(
+        f"/api/admin/mutation-requests/{submitted['id']}/review-decision",
+        headers={"Authorization": "Bearer dev:leg_admin"},
+        json={"decision": "approved"},
+    )
+
+    package = client.post(
+        "/api/admin/mutation-packages",
+        headers={"Authorization": "Bearer dev:leg_admin"},
+        json={"quarter": "2031-Q2"},
+    )
+
+    assert reviewed.status_code == 200
+    assert reviewed.json()["status"] == "approved"
+    assert package.status_code == 400
+    assert package.json() == {
+        "detail": "No package-ready un-packaged mutation requests for quarter",
+    }
 
 
 def test_verified_participant_can_submit_regular_exit_mutation() -> None:

@@ -47,9 +47,9 @@ def submit_regular_address_mutation(
 
 def approve_mutation_request(client: TestClient, mutation_request_id: str):
     return client.post(
-        f"/api/admin/mutation-requests/{mutation_request_id}/review-decision",
+        f"/api/admin/mutation-requests/{mutation_request_id}/package-readiness",
         headers={"Authorization": "Bearer dev:leg_admin"},
-        json={"decision": "approved"},
+        json={"ready": True, "reason": "Paketbereit-Check bestanden."},
     )
 
 
@@ -63,7 +63,7 @@ def drain_existing_approved_q3_mutations(client: TestClient) -> None:
     assert response.status_code in {201, 400}
     if response.status_code == 400:
         assert response.json() == {
-            "detail": "No approved un-packaged mutation requests for quarter",
+            "detail": "No package-ready un-packaged mutation requests for quarter",
         }
 
 
